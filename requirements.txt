@@ -1,0 +1,17 @@
+opencv-python
+paddleocr
+paddlepaddle
+numpy>=1.24.0
+vietocr
+pillow>=9.5.0
+setuptools<82
+torch>=2.0.0
+transformers>=4.48.0
+tqdm>=4.65.0
+pydantic>=2.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+faiss-cpu>=1.7.4
+python-multipart>=0.0.9
+requests>=2.31.0
+streamlit>=1.40.0

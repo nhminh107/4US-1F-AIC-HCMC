@@ -1,0 +1,242 @@
+# =========================================================
+# Python
+# =========================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# =========================================================
+# Virtual environments
+# =========================================================
+.venv/
+venv/
+env/
+ENV/
+conda-env/
+.python-version
+
+# =========================================================
+# IDE / Editor
+# =========================================================
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# =========================================================
+# OS files
+# =========================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================================================
+# Environment variables / secrets
+# =========================================================
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+credentials.json
+kaggle.json
+
+# =========================================================
+# Logs and temporary files
+# =========================================================
+logs/
+*.log
+tmp/
+temp/
+.cache/
+cache/
+
+# =========================================================
+# Raw datasets
+# =========================================================
+data/raw/
+data/datasets/
+data/videos/
+# data/keyframes/* (khong phai "data/keyframes/") de co the "un-ignore" rieng
+# data/keyframes/.gitkeep ben duoi - Git khong cho un-ignore 1 file khi chinh
+# thu muc cha cua no da bi ignore truc tiep.
+data/keyframes/*
+
+datasets/
+videos/
+
+# Compressed dataset files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# =========================================================
+# Generated metadata
+# =========================================================
+data/processed/
+data/generated/
+
+metadata/generated/
+metadata/*.jsonl
+metadata/*.parquet
+metadata/*.csv
+
+# Keep directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/keyframes/.gitkeep
+!metadata/.gitkeep
+
+# =========================================================
+# Embeddings
+# =========================================================
+embeddings/
+data/embeddings/
+
+*.npy
+*.npz
+*.pt
+*.pth
+*.safetensors
+
+# =========================================================
+# FAISS indexes
+# =========================================================
+indexes/
+data/indexes/
+
+*.faiss
+*.index
+*.bin
+
+# =========================================================
+# Milvus local data
+# =========================================================
+milvus_data/
+volumes/
+docker-compose-data/
+
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================================================
+# Model files and checkpoints
+# =========================================================
+models/
+checkpoints/
+weights/
+runs/
+
+*.ckpt
+*.onnx
+*.engine
+*.tflite
+
+# =========================================================
+# OCR / Caption generated outputs
+# =========================================================
+outputs/
+results/
+predictions/
+
+ocr_outputs/
+caption_outputs/
+retrieval_results/
+
+# =========================================================
+# Jupyter Notebook
+# =========================================================
+.ipynb_checkpoints/
+
+# Uncomment if notebooks contain large embedded outputs
+# *.ipynb
+
+# =========================================================
+# ML experiment tracking
+# =========================================================
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+events.out.tfevents.*
+
+# =========================================================
+# Build / Packaging
+# =========================================================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =========================================================
+# Frontend
+# =========================================================
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/.vite/
+frontend/coverage/
+
+# =========================================================
+# Backend runtime files
+# =========================================================
+backend/uploads/
+backend/static/generated/
+backend/logs/
+
+# =========================================================
+# Docker local overrides
+# =========================================================
+docker-compose.override.yml
+
+# =========================================================
+# Local configuration
+# =========================================================
+config/local.yaml
+config/local.yml
+config/local.json
+
+# =========================================================
+# Keep reusable source code and configs
+# =========================================================
+!config/*.example.yaml
+!config/*.example.yml
+!config/*.example.json
+
+# =========================================================
+# Personal markdown docs (not pushed)
+# =========================================================
+Markdown_Doc/
+
+# =========================================================
+# Local test data for OCR
+# =========================================================
+Test_data/
+
+# =========================================================
+# Module OCR output (BackEnd/app/ocr/output/) - KHONG bi ignore.
+#
+# Day la ket qua cuoi cung cua Module OCR (ocr_final_results.json - {img_path, texts}
+# cho toan bo keyframe), la input truc tiep cho Module Text-Embedding buoc sau, nen
+# CAN duoc push/commit binh thuong - khac voi cac thu muc "outputs/"/"results/" o
+# tren (danh cho output tam thoi/experiment, khong dung o day).
+#
+# Anh crop trung gian giua Detection/Recognition khong con ghi ra dia nua (giu dang
+# numpy array trong RAM, truyen thang trong cung 1 process - xem muc 3 module_ocr.md),
+# nen khong con file/thu muc debug nao khac trong output/ can ignore.
+# =========================================================
