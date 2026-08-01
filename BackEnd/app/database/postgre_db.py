@@ -276,3 +276,4 @@ class Postgre_Manager:
                 raise
 
             return embedding_record
+

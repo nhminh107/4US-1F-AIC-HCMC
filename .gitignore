@@ -64,6 +64,9 @@ cache/
 # =========================================================
 # Raw datasets
 # =========================================================
+/data/*
+!/data/__init__.py
+
 data/raw/
 data/datasets/
 data/videos/
@@ -88,7 +91,6 @@ videos/
 # =========================================================
 data/processed/
 data/generated/
-
 metadata/generated/
 metadata/*.jsonl
 metadata/*.parquet
