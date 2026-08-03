@@ -1,185 +1,277 @@
--- Khởi động PostgreSQL, chạy script này, đọc readme để hướng dẫn kết nối
-BEGIN;
+create table Video (
+	video_id varchar(15) primary key, 
+	video_path varchar(200) not null, 
+	title varchar(100), 
+	description varchar(500), 
+	keywords varchar(100)[], 
+	author varchar(50), 
+	channel_id varchar(50), 
+	channel_url varchar(500), 
+	watch_url varchar(500),
+	thumbnail_url varchar(500), 
+	publish_date date,  
+	duration_ms bigint check (duration_ms >= 0)
+); 
 
--- =====================================================
--- VIDEO
--- =====================================================
-CREATE TABLE video (
-    video_id        VARCHAR(32) PRIMARY KEY,
+create table Shot (
+	shot_id varchar(15) not null, 
+	video_id varchar(15) not null,
+	
+	shot_index int not null check (shot_index >= 0), 
+	start_ms bigint not null check (start_ms >= 0), 
+	end_ms bigint not null check (end_ms > start_ms), 
+	
+	start_frame_idx bigint check (start_frame_idx >= 0), 
+	end_frame_idx bigint check (end_frame_idx >= start_frame_idx),
+	
+	primary key (shot_id), 
+	unique (video_id, shot_id),
+	unique (video_id, shot_index),
+	
+	foreign key (video_id) references Video(video_id)
+); 
 
-    fps             DOUBLE PRECISION NOT NULL
-                        CHECK (fps > 0),
-
-    duration_ms     BIGINT NOT NULL
-                        CHECK (duration_ms >= 0),
-
-    video_path      TEXT NOT NULL
+create table Frame (
+	frame_id varchar(15) primary key,
+	n int check (n >= 0), 
+	video_id varchar(15) not null,
+	shot_id varchar(15) not null, 
+	
+	pts_time bigint check (pts_time >= 0), 
+	timestamp_ms bigint not null check (timestamp_ms >= 0),
+	fps float not null check (fps > 0),
+	frame_idx bigint not null check (frame_idx >= 0), 
+	
+	frame_role varchar(20) not null check (
+		frame_role in ('keyframe', 'tracking_sample')
+	),
+	source varchar(20) not null check (
+		source in ('official', 'extracted')
+	),
+	frame_path varchar(200),
+	width int check (width > 0),
+	height int check (height > 0),
+	
+	unique (video_id, frame_idx),
+	
+	foreign key (video_id, shot_id) references Shot(video_id, shot_id)
 );
 
-
--- =====================================================
--- SCENE
--- =====================================================
-CREATE TABLE scene (
-    scene_id        VARCHAR(48) PRIMARY KEY,
-
-    video_id        VARCHAR(32) NOT NULL,
-
-    start_ms        BIGINT NOT NULL
-                        CHECK (start_ms >= 0),
-
-    end_ms          BIGINT NOT NULL
-                        CHECK (end_ms > start_ms),
-
-    CONSTRAINT fk_scene_video
-        FOREIGN KEY (video_id)
-        REFERENCES video(video_id)
-        ON DELETE CASCADE
+create table ClassID (
+	class_id varchar(15) primary key, 
+	class_name varchar(50) not null unique
 );
 
+create table OCR (
+	frame_id varchar(15) not null, 
+	n int not null check (n >= 0), 
+	text text not null, 
+	language varchar(10), 
+	
+	x_min float not null check (x_min between 0 and 1), 
+	x_max float not null check (x_max between 0 and 1), 
+	y_min float not null check (y_min between 0 and 1), 
+	y_max float not null check (y_max between 0 and 1), 
 
--- =====================================================
--- KEYFRAME
--- Chỉ giữ metadata cốt lõi của keyframe
--- =====================================================
-CREATE TABLE keyframe (
-    keyframe_id     VARCHAR(64) PRIMARY KEY,
+	primary key (frame_id, n),
+	
+	check (x_min < x_max),
+	check (y_min < y_max),
+	
+	foreign key (frame_id) references Frame(frame_id) 
+); 
 
-    scene_id        VARCHAR(48) NOT NULL,
-
-    -- ID int64 do code của bạn tự cấp cho FAISS
-    visual_index_id BIGINT NOT NULL UNIQUE,
-
-    timestamp_ms    BIGINT NOT NULL
-                        CHECK (timestamp_ms >= 0),
-
-    image_path      TEXT NOT NULL,
-
-    CONSTRAINT fk_keyframe_scene
-        FOREIGN KEY (scene_id)
-        REFERENCES scene(scene_id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT uq_keyframe_scene_time
-        UNIQUE (scene_id, timestamp_ms)
+create table ObjectDetection (
+	detection_id varchar(15) primary key,
+	frame_id varchar(15) not null, 
+	class_id varchar(15) not null,
+	
+	confidence float not null check (
+		confidence between 0 and 1
+	),  
+	
+	x_min float not null check (x_min between 0 and 1), 
+	x_max float not null check (x_max between 0 and 1), 
+	y_min float not null check (y_min between 0 and 1),
+	y_max float not null check (y_max between 0 and 1),
+	
+	model_name varchar(100),
+	model_version varchar(50),
+	
+	check (x_min < x_max),
+	check (y_min < y_max),
+	
+	foreign key (frame_id) references Frame(frame_id),
+	foreign key (class_id) references ClassID(class_id)
 );
 
-
--- =====================================================
--- OCR
--- Mỗi vùng chữ là một record riêng
--- Bounding box là hình chữ nhật không xoay
---
--- bbox_x, bbox_y: góc trên bên trái
--- bbox_width, bbox_height: chiều rộng và chiều cao
---
--- Tất cả tọa độ được chuẩn hóa trong khoảng 0 đến 1
--- =====================================================
-CREATE TABLE ocr (
-    ocr_id          VARCHAR(80) PRIMARY KEY,
-
-    keyframe_id     VARCHAR(64) NOT NULL,
-
-    text            TEXT NOT NULL,
-
-    confidence      REAL
-                        CHECK (
-                            confidence IS NULL
-                            OR confidence BETWEEN 0 AND 1
-                        ),
-
-    bbox_x          DOUBLE PRECISION NOT NULL,
-    bbox_y          DOUBLE PRECISION NOT NULL,
-    bbox_width      DOUBLE PRECISION NOT NULL,
-    bbox_height     DOUBLE PRECISION NOT NULL,
-
-    CONSTRAINT fk_ocr_keyframe
-        FOREIGN KEY (keyframe_id)
-        REFERENCES keyframe(keyframe_id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT chk_ocr_bbox
-        CHECK (
-            bbox_x >= 0
-            AND bbox_y >= 0
-            AND bbox_width > 0
-            AND bbox_height > 0
-            AND bbox_x + bbox_width <= 1
-            AND bbox_y + bbox_height <= 1
-        )
+create table FrameEmbeddingRecord (
+	faiss_id bigint not null, 
+	index_version int not null check (index_version >= 0), 
+	frame_id varchar(15) not null, 
+	model_name varchar(100) not null, 
+	
+	primary key (faiss_id, index_version),
+	unique (frame_id, index_version),
+	
+	foreign key (frame_id) references Frame(frame_id)
 );
 
+create table TranscriptSegment (
+	segment_id varchar(15) primary key, 
+	video_id varchar(15) not null, 
+	
+	start_ms bigint not null check (start_ms >= 0), 
+	end_ms bigint not null check (end_ms > start_ms), 
+	
+	text text not null,
+	language varchar(10),
+	
+	foreign key (video_id) references Video(video_id)
+); 
 
--- =====================================================
--- CAPTION
--- Một keyframe có thể có một hoặc nhiều caption
--- =====================================================
-CREATE TABLE caption (
-    caption_id      VARCHAR(80) PRIMARY KEY,
+create table ObjectTrack (
+	track_id varchar(15) primary key, 
+	shot_id varchar(15) not null, 
+	class_id varchar(15) not null,
+	
+	start_ms bigint not null check (start_ms >= 0), 
+	end_ms bigint not null check (end_ms > start_ms),
+	
+	start_frame_idx bigint check (start_frame_idx >= 0),
+	end_frame_idx bigint check (end_frame_idx >= start_frame_idx),
+	
+	observation_count int not null check (observation_count > 0), 
+	avg_confidence float check (
+		avg_confidence between 0 and 1
+	),
+	
+	tracker_name varchar(100),
+	tracker_version varchar(50),
+	
+	foreign key (shot_id) references Shot(shot_id),
+	foreign key (class_id) references ClassID(class_id)
+); 
 
-    keyframe_id     VARCHAR(64) NOT NULL,
-
-    text            TEXT NOT NULL,
-
-    CONSTRAINT fk_caption_keyframe
-        FOREIGN KEY (keyframe_id)
-        REFERENCES keyframe(keyframe_id)
-        ON DELETE CASCADE
+create table TrackObservation (
+	track_id varchar(15) not null, 
+	detection_id varchar(15) not null, 
+	
+	primary key (track_id, detection_id),
+	unique (detection_id),
+	
+	foreign key (track_id) references ObjectTrack(track_id), 
+	foreign key (detection_id) references ObjectDetection(detection_id)
 );
 
-
--- =====================================================
--- ASR / TRANSCRIPT
--- Transcript thuộc một khoảng thời gian trong video
--- =====================================================
-CREATE TABLE transcript_segment (
-    segment_id      VARCHAR(80) PRIMARY KEY,
-
-    video_id        VARCHAR(32) NOT NULL,
-
-    start_ms        BIGINT NOT NULL
-                        CHECK (start_ms >= 0),
-
-    end_ms          BIGINT NOT NULL
-                        CHECK (end_ms > start_ms),
-
-    text            TEXT NOT NULL,
-
-    CONSTRAINT fk_transcript_video
-        FOREIGN KEY (video_id)
-        REFERENCES video(video_id)
-        ON DELETE CASCADE
+create table ClipWindow (
+	clip_id varchar(15) primary key,
+	shot_id varchar(15) not null,
+	
+	start_ms bigint not null check (start_ms >= 0),
+	end_ms bigint not null check (end_ms > start_ms),
+	
+	start_frame_idx bigint check (start_frame_idx >= 0),
+	end_frame_idx bigint check (end_frame_idx >= start_frame_idx),
+	
+	sampling_fps float check (sampling_fps > 0),
+	clip_path varchar(200),
+	
+	unique (shot_id, start_ms, end_ms),
+	
+	foreign key (shot_id) references Shot(shot_id)
 );
 
-CREATE TABLE embedding_record (
-    faiss_id        BIGINT,
-    keyframe_id     VARCHAR(64),
-    index_version   VARCHAR(50),
-    model_name      VARCHAR(100),
-    PRIMARY KEY (faiss_id, index_version),
-    foreign key (keyframe_id) references keyframe(keyframe_id)
+create table ClipEmbeddingRecord (
+	faiss_id bigint not null,
+	index_version int not null check (index_version >= 0),
+	clip_id varchar(15) not null,
+	model_name varchar(100) not null,
+	
+	primary key (faiss_id, index_version),
+	unique (clip_id, index_version),
+	
+	foreign key (clip_id) references ClipWindow(clip_id)
 );
 
--- =====================================================
--- INDEXES
--- =====================================================
+create table Event (
+	event_id varchar(15) primary key,
+	shot_id varchar(15) not null,
+	clip_id varchar(15),
+	
+	event_type varchar(50) not null,
+	description text,
+	
+	start_ms bigint not null check (start_ms >= 0),
+	end_ms bigint not null check (end_ms > start_ms),
+	
+	confidence float check (
+		confidence between 0 and 1
+	),
+	
+	model_name varchar(100),
+	model_version varchar(50),
+	
+	foreign key (shot_id) references Shot(shot_id),
+	foreign key (clip_id) references ClipWindow(clip_id)
+);
 
-CREATE INDEX idx_scene_video
-    ON scene(video_id);
+create table EventParticipant (
+	event_id varchar(15) not null,
+	track_id varchar(15) not null,
+	role varchar(20) not null check (
+		role in ('subject', 'target', 'object', 'participant')
+	),
+	confidence float check (
+		confidence between 0 and 1
+	),
+	
+	primary key (event_id, track_id, role),
+	
+	foreign key (event_id) references Event(event_id),
+	foreign key (track_id) references ObjectTrack(track_id)
+);
 
-CREATE INDEX idx_scene_video_time
-    ON scene(video_id, start_ms, end_ms);
-
-CREATE INDEX idx_keyframe_scene
-    ON keyframe(scene_id);
-
-CREATE INDEX idx_keyframe_scene_time
-    ON keyframe(scene_id, timestamp_ms);
-
-CREATE INDEX idx_ocr_keyframe
-    ON ocr(keyframe_id);
-
-CREATE INDEX idx_transcript_video_time
-    ON transcript_segment(video_id, start_ms, end_ms);
-
-COMMIT;
+create table EventEvidence (
+	evidence_id varchar(15) primary key,
+	event_id varchar(15) not null,
+	
+	frame_id varchar(15),
+	detection_id varchar(15),
+	track_id varchar(15),
+	segment_id varchar(15),
+	ocr_frame_id varchar(15),
+	ocr_n int,
+	
+	evidence_score float check (
+		evidence_score between 0 and 1
+	),
+	
+	check (
+		(ocr_frame_id is null and ocr_n is null)
+		or
+		(ocr_frame_id is not null and ocr_n is not null)
+	),
+	
+	check (
+		num_nonnulls(
+			frame_id,
+			detection_id,
+			track_id,
+			segment_id
+		)
+		+
+		case
+			when ocr_frame_id is not null then 1
+			else 0
+		end
+		= 1
+	),
+	
+	foreign key (event_id) references Event(event_id),
+	foreign key (frame_id) references Frame(frame_id),
+	foreign key (detection_id) references ObjectDetection(detection_id),
+	foreign key (track_id) references ObjectTrack(track_id),
+	foreign key (segment_id) references TranscriptSegment(segment_id),
+	foreign key (ocr_frame_id, ocr_n) references OCR(frame_id, n)
+);
