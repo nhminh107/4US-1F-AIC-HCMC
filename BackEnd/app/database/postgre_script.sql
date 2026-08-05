@@ -51,11 +51,16 @@ create table Frame (
 	frame_path varchar(200),
 	width int check (width > 0),
 	height int check (height > 0),
+
+	check (frame_role <> 'tracking_sample' or frame_path is null),
 	
 	unique (video_id, frame_idx),
 	
 	foreign key (video_id, shot_id) references Shot(video_id, shot_id)
 );
+
+comment on column Frame.frame_path is
+	'NULL for tracking_sample frames when only frame metadata is persisted';
 
 create table ClassID (
 	class_id varchar(15) primary key, 
@@ -82,7 +87,7 @@ create table OCR (
 ); 
 
 create table ObjectDetection (
-	detection_id varchar(15) primary key,
+	detection_id bigint generated always as identity primary key,
 	frame_id varchar(15) not null, 
 	class_id varchar(15) not null,
 	
@@ -131,7 +136,7 @@ create table TranscriptSegment (
 ); 
 
 create table ObjectTrack (
-	track_id varchar(15) primary key, 
+	track_id bigint generated always as identity primary key,
 	shot_id varchar(15) not null, 
 	class_id varchar(15) not null,
 	
@@ -154,8 +159,8 @@ create table ObjectTrack (
 ); 
 
 create table TrackObservation (
-	track_id varchar(15) not null, 
-	detection_id varchar(15) not null, 
+	track_id bigint not null,
+	detection_id bigint not null,
 	
 	primary key (track_id, detection_id),
 	unique (detection_id),
@@ -194,84 +199,45 @@ create table ClipEmbeddingRecord (
 	foreign key (clip_id) references ClipWindow(clip_id)
 );
 
-create table Event (
-	event_id varchar(15) primary key,
+create table ShotEmbeddingRecord (
+	faiss_id bigint not null,
+	index_version int not null check (index_version >= 0),
 	shot_id varchar(15) not null,
-	clip_id varchar(15),
-	
-	event_type varchar(50) not null,
-	description text,
-	
-	start_ms bigint not null check (start_ms >= 0),
-	end_ms bigint not null check (end_ms > start_ms),
-	
-	confidence float check (
-		confidence between 0 and 1
+	model_name varchar(100) not null,
+	model_version varchar(50) not null,
+	pooling_method varchar(30) not null default 'mean',
+
+	primary key (faiss_id, index_version),
+	unique (
+		shot_id,
+		index_version,
+		model_name,
+		model_version,
+		pooling_method
 	),
-	
-	model_name varchar(100),
-	model_version varchar(50),
-	
-	foreign key (shot_id) references Shot(shot_id),
-	foreign key (clip_id) references ClipWindow(clip_id)
+
+	foreign key (shot_id) references Shot(shot_id)
 );
 
-create table EventParticipant (
-	event_id varchar(15) not null,
-	track_id varchar(15) not null,
-	role varchar(20) not null check (
-		role in ('subject', 'target', 'object', 'participant')
-	),
-	confidence float check (
-		confidence between 0 and 1
-	),
-	
-	primary key (event_id, track_id, role),
-	
-	foreign key (event_id) references Event(event_id),
-	foreign key (track_id) references ObjectTrack(track_id)
-);
-
-create table EventEvidence (
-	evidence_id varchar(15) primary key,
-	event_id varchar(15) not null,
-	
+create table Caption (
+	caption_id bigint generated always as identity primary key,
 	frame_id varchar(15),
-	detection_id varchar(15),
-	track_id varchar(15),
-	segment_id varchar(15),
-	ocr_frame_id varchar(15),
-	ocr_n int,
-	
-	evidence_score float check (
-		evidence_score between 0 and 1
+	clip_id varchar(15),
+	shot_id varchar(15),
+
+	caption_text text not null,
+	structured_data jsonb,
+	model_name varchar(100) not null,
+	model_version varchar(50),
+	prompt_version varchar(50),
+	confidence float check (
+		confidence between 0 and 1
 	),
-	
-	check (
-		(ocr_frame_id is null and ocr_n is null)
-		or
-		(ocr_frame_id is not null and ocr_n is not null)
-	),
-	
-	check (
-		num_nonnulls(
-			frame_id,
-			detection_id,
-			track_id,
-			segment_id
-		)
-		+
-		case
-			when ocr_frame_id is not null then 1
-			else 0
-		end
-		= 1
-	),
-	
-	foreign key (event_id) references Event(event_id),
+	created_at timestamptz not null default now(),
+
+	check (num_nonnulls(frame_id, clip_id, shot_id) = 1),
+
 	foreign key (frame_id) references Frame(frame_id),
-	foreign key (detection_id) references ObjectDetection(detection_id),
-	foreign key (track_id) references ObjectTrack(track_id),
-	foreign key (segment_id) references TranscriptSegment(segment_id),
-	foreign key (ocr_frame_id, ocr_n) references OCR(frame_id, n)
+	foreign key (clip_id) references ClipWindow(clip_id),
+	foreign key (shot_id) references Shot(shot_id)
 );
