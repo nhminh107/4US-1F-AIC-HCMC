@@ -60,7 +60,6 @@ class FrameMetadata:
     width: int | None = None
     height: int | None = None
 
-
 @dataclass(frozen=True, slots=True)
 class ClassMetadata:
     """A class known by the object-detection pipeline."""
