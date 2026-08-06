@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np 
-import CONFIG as cf 
+from BackEnd.app.embedding import CONFIG as cf 
 from sentence_transformers import SentenceTransformer, util
 class BaseEmbedder(ABC): 
     def __init__(self):
@@ -11,6 +11,15 @@ class BaseEmbedder(ABC):
         data = self.get_real_data(data_record)
         data = self.preprocess(data)
         data = self.encode(data)
+
+        return data 
+
+    def embed_batch(self, batch_data, size): 
+        data_list = self.get_real_data_list(batch_data)
+        data_pp = self.preprocess_batch(data_list)
+        data = self.encode(data_pp)
+
+        return data
 
     @abstractmethod 
     def get_real_data(self, data): 
@@ -26,3 +35,15 @@ class BaseEmbedder(ABC):
     def encode(self, data): 
         """Tiến hành embedding"""
         pass 
+
+    @abstractmethod
+    def get_real_data_list(self, batch_data): 
+        pass
+
+    @abstractmethod
+    def preprocess_batch(self, batch_data):
+        pass
+
+    @abstractmethod
+    def encode_batch(self, batch_img):
+        pass
