@@ -1,0 +1,2 @@
+"""Clip embedding pipeline modules."""
+

@@ -9,7 +9,7 @@ class BaseEmbedder(ABC):
         data = self.get_real_data(data_record)
         data = self.preprocess(data)
         data = self.encode(data)
-        data = self.normalize(data)
+        return self.normalize(data)
 
     @abstractmethod 
     def get_real_data(self, data): 
@@ -28,11 +28,10 @@ class BaseEmbedder(ABC):
 
     def normalize(self, vector): 
         vector = np.asarray(vector, dtype=np.float32)
-
+        norm = np.linalg.norm(vector)
         if norm == 0:
             raise ValueError("Embedding is a zero vector")
-        
-        norm = np.linalg.norm(vector)
+
         vector_norm = vector / norm
 
-        return vector
+        return vector_norm
