@@ -1,0 +1,2 @@
+"""Shot embedding pipeline modules."""
+

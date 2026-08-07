@@ -11,7 +11,6 @@ class BaseEmbedder(ABC):
         data = self.get_real_data(data_record)
         data = self.preprocess(data)
         data = self.encode(data)
-
         return data 
 
     def embed_batch(self, batch_data): 
