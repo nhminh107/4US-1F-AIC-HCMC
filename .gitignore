@@ -12,6 +12,8 @@ __pycache__/
 coverage.xml
 htmlcov/
 *.agents
+*.claude
+skills-lock.json
 # =========================================================
 # Virtual environments
 # =========================================================
@@ -229,6 +231,10 @@ Markdown_Doc/
 # Local test data for OCR
 # =========================================================
 Test_data/
+
+# docs cua Truong
+docs_rule_diagram
+tasks
 
 # =========================================================
 # Module OCR output (BackEnd/app/ocr/output/) - KHONG bi ignore.
