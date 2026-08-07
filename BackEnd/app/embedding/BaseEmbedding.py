@@ -1,15 +1,24 @@
 from abc import ABC, abstractmethod
 import numpy as np 
-
+from BackEnd.app.embedding import CONFIG as cf 
+from sentence_transformers import SentenceTransformer, util
 class BaseEmbedder(ABC): 
-
+    def __init__(self):
+        self.model = SentenceTransformer(cf.CLIP_MODEL, device=cf.device)
     def embed(self, data_record) -> np.ndarray: 
         """Đây là pipeline embedding chung cho 3 loại: Image, Clip, Shot. Gọi hàm này là sử dụng được"""
 
         data = self.get_real_data(data_record)
         data = self.preprocess(data)
         data = self.encode(data)
-        return self.normalize(data)
+        return data 
+
+    def embed_batch(self, batch_data): 
+        data_list = self.get_real_data_list(batch_data)
+        data_pp = self.preprocess_batch(data_list)
+        data = self.encode(data_pp)
+
+        return data
 
     @abstractmethod 
     def get_real_data(self, data): 
@@ -26,12 +35,14 @@ class BaseEmbedder(ABC):
         """Tiến hành embedding"""
         pass 
 
-    def normalize(self, vector): 
-        vector = np.asarray(vector, dtype=np.float32)
-        norm = np.linalg.norm(vector)
-        if norm == 0:
-            raise ValueError("Embedding is a zero vector")
+    @abstractmethod
+    def get_real_data_list(self, batch_data): 
+        pass
 
-        vector_norm = vector / norm
+    @abstractmethod
+    def preprocess_batch(self, batch_data):
+        pass
 
-        return vector_norm
+    @abstractmethod
+    def encode_batch(self, batch_img):
+        pass
