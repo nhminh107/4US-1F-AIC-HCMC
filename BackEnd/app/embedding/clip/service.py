@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import gc
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 
 from BackEnd.app.contracts.embedding import ClipRecord, EmbeddingRecord, VideoAsset
@@ -29,12 +32,16 @@ class ClipEmbeddingService:
         run_id: str | None = None,
         artifact_writer: EmbeddingArtifactWriter | None = None,
         decode_tolerance_ms: int = CONFIG.DECODE_TOLERANCE_MS,
+        num_workers: int = 1,
+        enable_gc: bool = True,
     ) -> None:
         self.decoder = decoder
         self.model_adapter = model_adapter
         self.run_id = run_id or f"clip-run-{uuid4().hex[:12]}"
         self.artifact_writer = artifact_writer
         self.decode_tolerance_ms = decode_tolerance_ms
+        self.num_workers = max(1, int(num_workers))
+        self.enable_gc = enable_gc
 
     def embed_clips(
         self,
@@ -48,17 +55,36 @@ class ClipEmbeddingService:
         failures: list[EmbeddingRecord] = []
         dimension = self._resolve_dimension()
 
-        for work_unit in plan_video_work(clips, video_assets):
+        work_units = list(plan_video_work(clips, video_assets))
+
+        decoded_map = {}
+        valid_work_units = [unit for unit in work_units if unit.video_asset is not None]
+        if self.num_workers > 1 and valid_work_units:
+            def _decode_unit(unit):
+                return unit.video_asset.video_id, self.decoder.decode_nearest_frames(
+                    unit.video_asset,
+                    unit.unique_timestamps_ms,
+                )
+
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                results = executor.map(_decode_unit, valid_work_units)
+                for video_id, decoded_batch in results:
+                    decoded_map[video_id] = decoded_batch
+
+        for work_unit in work_units:
             video_asset = work_unit.video_asset
             if video_asset is None:
                 for clip in work_unit.sorted_clip_records:
                     failures.append(self._failure_record(clip, CONFIG.EmbeddingStatus.MEDIA_NOT_FOUND, "video asset not resolved"))
                 continue
 
-            decoded = self.decoder.decode_nearest_frames(
-                video_asset,
-                work_unit.unique_timestamps_ms,
-            )
+            if video_asset.video_id in decoded_map:
+                decoded = decoded_map[video_asset.video_id]
+            else:
+                decoded = self.decoder.decode_nearest_frames(
+                    video_asset,
+                    work_unit.unique_timestamps_ms,
+                )
             requested_to_vector: dict[int, np.ndarray] = {}
             requested_to_actual: dict[int, int | None] = {}
             valid_images = []
@@ -84,6 +110,8 @@ class ClipEmbeddingService:
                 except Exception as error:  # noqa: BLE001 - preserve adapter boundary context.
                     for clip in work_unit.sorted_clip_records:
                         failures.append(self._failure_record(clip, CONFIG.EmbeddingStatus.MODEL_FAILED, str(error)))
+                    if self.enable_gc:
+                        gc.collect()
                     continue
                 actual_to_vector = {
                     int(actual_timestamp): np.asarray(vector, dtype=np.float32)
@@ -130,6 +158,12 @@ class ClipEmbeddingService:
                     )
                 )
 
+            if self.enable_gc:
+                del requested_to_vector
+                del requested_to_actual
+                del valid_images
+                gc.collect()
+
         all_records = records + failures
         writer = self.artifact_writer or EmbeddingArtifactWriter(
             entity_type=CONFIG.EntityType.CLIP,
@@ -145,6 +179,134 @@ class ClipEmbeddingService:
             else np.empty((0, dimension), dtype=np.float32)
         )
         return writer.write(vector_matrix, all_records)
+
+    def embed_clips_to_matrix(
+        self,
+        clips: list[ClipRecord],
+        video_assets: dict[str, VideoAsset],
+    ) -> tuple[np.ndarray, list[EmbeddingRecord]]:
+        """Embed clips and return raw in-memory numpy matrix (N, dim) and records without requiring disk artifact writing."""
+
+        vectors: list[np.ndarray] = []
+        records: list[EmbeddingRecord] = []
+        failures: list[EmbeddingRecord] = []
+        dimension = self._resolve_dimension()
+
+        work_units = list(plan_video_work(clips, video_assets))
+
+        decoded_map = {}
+        valid_work_units = [unit for unit in work_units if unit.video_asset is not None]
+        if self.num_workers > 1 and valid_work_units:
+            def _decode_unit(unit):
+                return unit.video_asset.video_id, self.decoder.decode_nearest_frames(
+                    unit.video_asset,
+                    unit.unique_timestamps_ms,
+                )
+
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                results = executor.map(_decode_unit, valid_work_units)
+                for video_id, decoded_batch in results:
+                    decoded_map[video_id] = decoded_batch
+
+        for work_unit in work_units:
+            video_asset = work_unit.video_asset
+            if video_asset is None:
+                for clip in work_unit.sorted_clip_records:
+                    failures.append(self._failure_record(clip, CONFIG.EmbeddingStatus.MEDIA_NOT_FOUND, "video asset not resolved"))
+                continue
+
+            if video_asset.video_id in decoded_map:
+                decoded = decoded_map[video_asset.video_id]
+            else:
+                decoded = self.decoder.decode_nearest_frames(
+                    video_asset,
+                    work_unit.unique_timestamps_ms,
+                )
+            requested_to_vector: dict[int, np.ndarray] = {}
+            requested_to_actual: dict[int, int | None] = {}
+            valid_images = []
+            valid_requested_actual_pairs = []
+            unique_actual_timestamps = []
+            actual_seen: set[int] = set()
+            for requested_timestamp, actual_timestamp, image, status in zip(
+                decoded.requested_timestamps_ms,
+                decoded.actual_timestamps_ms,
+                decoded.images,
+                decoded.decode_statuses,
+            ):
+                if status == "success" and image is not None and actual_timestamp is not None:
+                    valid_requested_actual_pairs.append((requested_timestamp, actual_timestamp))
+                    if actual_timestamp not in actual_seen:
+                        actual_seen.add(actual_timestamp)
+                        valid_images.append(image)
+                        unique_actual_timestamps.append(actual_timestamp)
+
+            if valid_images:
+                try:
+                    encoded = self.model_adapter.encode_images(valid_images)
+                except Exception as error:  # noqa: BLE001
+                    for clip in work_unit.sorted_clip_records:
+                        failures.append(self._failure_record(clip, CONFIG.EmbeddingStatus.MODEL_FAILED, str(error)))
+                    if self.enable_gc:
+                        gc.collect()
+                    continue
+                actual_to_vector = {
+                    int(actual_timestamp): np.asarray(vector, dtype=np.float32)
+                    for actual_timestamp, vector in zip(unique_actual_timestamps, encoded)
+                }
+                for requested_timestamp, actual_timestamp in valid_requested_actual_pairs:
+                    requested_to_vector[int(requested_timestamp)] = actual_to_vector[int(actual_timestamp)]
+                    requested_to_actual[int(requested_timestamp)] = int(actual_timestamp)
+
+            for clip in work_unit.sorted_clip_records:
+                sampled = uniform_midpoint_timestamps(clip)
+                frame_vectors = []
+                valid_mask = []
+                actual_timestamps: list[int | None] = []
+                for timestamp in sampled:
+                    vector = requested_to_vector.get(timestamp)
+                    actual_timestamp = requested_to_actual.get(timestamp)
+                    actual_timestamps.append(actual_timestamp)
+                    if (
+                        vector is None
+                        or actual_timestamp is None
+                        or not self._actual_timestamp_is_valid(clip, timestamp, actual_timestamp)
+                    ):
+                        frame_vectors.append(np.zeros(dimension, dtype=np.float32))
+                        valid_mask.append(False)
+                    else:
+                        frame_vectors.append(vector)
+                        valid_mask.append(True)
+                try:
+                    clip_vector = aggregate_clip_frames(np.asarray(frame_vectors), valid_mask)
+                except ValueError as error:
+                    failures.append(self._failure_record(clip, CONFIG.EmbeddingStatus.DECODE_FAILED, str(error)))
+                    continue
+
+                vector_row = len(vectors)
+                vectors.append(clip_vector)
+                records.append(
+                    self._success_record(
+                        clip,
+                        sampled_timestamps=sampled,
+                        actual_timestamps=tuple(actual_timestamps),
+                        vector=clip_vector,
+                        vector_row=vector_row,
+                    )
+                )
+
+            if self.enable_gc:
+                del requested_to_vector
+                del requested_to_actual
+                del valid_images
+                gc.collect()
+
+        vector_matrix = (
+            np.asarray(vectors, dtype=np.float32)
+            if vectors
+            else np.empty((0, dimension), dtype=np.float32)
+        )
+        return vector_matrix, records + failures
 
     def _resolve_dimension(self) -> int:
         if self.artifact_writer is not None:

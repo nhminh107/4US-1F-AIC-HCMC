@@ -81,7 +81,30 @@ class PyAVVideoDecoder:
                             actual_by_timestamp[requested_ms] = actual_ms
                             status_by_timestamp[requested_ms] = "success"
                     except Exception:
-                        continue
+                        try:
+                            container.seek(0, any_frame=False, stream=stream)
+                            candidates = []
+                            for frame in container.decode(stream):
+                                if frame.pts is None:
+                                    continue
+                                actual_ms = int(round(float(frame.pts * stream.time_base) * 1000))
+                                if actual_ms > group_end_ms:
+                                    break
+                                decoded_frame_count += 1
+                                if actual_ms >= group_start_ms:
+                                    candidates.append((actual_ms, frame.to_ndarray(format="rgb24")))
+                            for requested_ms in group:
+                                if not candidates:
+                                    continue
+                                actual_ms, image = min(
+                                    candidates,
+                                    key=lambda item: abs(item[0] - requested_ms),
+                                )
+                                image_by_timestamp[requested_ms] = image
+                                actual_by_timestamp[requested_ms] = actual_ms
+                                status_by_timestamp[requested_ms] = "success"
+                        except Exception:
+                            continue
         except FileNotFoundError as error:
             raise MediaNotFoundError(str(video_asset.video_uri)) from error
         except Exception as error:

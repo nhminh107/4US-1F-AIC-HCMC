@@ -109,7 +109,74 @@ class ShotEmbeddingService:
             dimension=clip_manifest.dimension,
             run_id=self.run_id,
         )
-        return writer.write(np.asarray(vectors, dtype=np.float32), records + failures)
+        import gc
+        shot_manifest = writer.write(np.asarray(vectors, dtype=np.float32), records + failures)
+        gc.collect()
+        return shot_manifest
+
+    def aggregate_shots_to_matrix(
+        self,
+        *,
+        shots: list[ShotMetadata],
+        clip_records: list[EmbeddingRecord],
+        clip_vectors: np.ndarray,
+    ) -> tuple[np.ndarray, list[EmbeddingRecord]]:
+        """Aggregate in-memory clip vectors into shot numpy matrix (N_shots, dim) directly on RAM."""
+
+        records_by_shot: dict[str, list[EmbeddingRecord]] = {}
+        vectors_by_embedding_id = {}
+        for idx, record in enumerate(clip_records):
+            records_by_shot.setdefault(record.shot_id or "", []).append(record)
+            if idx < len(clip_vectors):
+                vectors_by_embedding_id[record.embedding_id] = clip_vectors[idx]
+
+        vectors: list[np.ndarray] = []
+        records: list[EmbeddingRecord] = []
+        failures: list[EmbeddingRecord] = []
+        for shot in shots:
+            source_records = records_by_shot.get(shot.shot_id, [])
+            if not source_records:
+                if self.missing_clip_embedder is not None:
+                    source_records, source_vectors = self.missing_clip_embedder(shot)
+                    source_clip_records = [
+                        _clip_record_from_embedding_record(record)
+                        for record in source_records
+                    ]
+                else:
+                    failures.append(self._failure_record(shot, "no compatible clip embeddings for shot"))
+                    continue
+            else:
+                source_clip_records = [_clip_record_from_embedding_record(record) for record in source_records]
+                source_vectors = np.asarray(
+                    [vectors_by_embedding_id[record.embedding_id] for record in source_records],
+                    dtype=np.float32,
+                )
+
+            try:
+                shot_vector = aggregate_shot_clips(source_clip_records, source_vectors)
+            except ValueError as error:
+                failures.append(self._failure_record(shot, str(error)))
+                continue
+
+            vector_row = len(vectors)
+            vectors.append(shot_vector)
+            records.append(
+                self._success_record(
+                    shot,
+                    shot_vector,
+                    tuple(record.embedding_id for record in source_records),
+                    vector_row,
+                )
+            )
+
+        import gc
+        vector_matrix = (
+            np.asarray(vectors, dtype=np.float32)
+            if vectors
+            else np.empty((0, clip_vectors.shape[1] if clip_vectors.ndim == 2 else 512), dtype=np.float32)
+        )
+        gc.collect()
+        return vector_matrix, records + failures
 
     @staticmethod
     def _validate_clip_artifact_compatibility(
