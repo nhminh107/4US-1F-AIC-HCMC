@@ -126,6 +126,9 @@ class TextSearchQuery:
 
     query_text: str
     top_k: int = 50
+    from_: int = 0
+    page: int = 1
+    sort_by: str | None = None
     source_types: tuple[TextSourceType, ...] = field(default_factory=tuple)
     video_ids: tuple[str, ...] = field(default_factory=tuple)
     language: str | None = None
@@ -143,6 +146,15 @@ class TextSearchQuery:
         )
         if self.top_k <= 0:
             raise ValueError("top_k must be greater than 0.")
+        if self.page < 1:
+            raise ValueError("page must be greater than or equal to 1.")
+        if self.from_ < 0:
+            raise ValueError("from_ must be greater than or equal to 0.")
+
+        computed_from = self.from_
+        if self.page > 1 and self.from_ == 0:
+            computed_from = (self.page - 1) * self.top_k
+        object.__setattr__(self, "from_", computed_from)
 
         source_types = _normalize_tuple(self.source_types, "source_types")
         for source_type in source_types:
