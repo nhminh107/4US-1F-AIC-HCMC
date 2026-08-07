@@ -440,6 +440,59 @@ class ElasticsearchDocumentBuilderTests(unittest.TestCase):
                 index_build_id="build-test",
             )
 
+    def test_ocr_document_with_boundary_coordinates_0_and_1(self) -> None:
+        frame = SimpleNamespace(
+            frame_id="L21_V001_001",
+            video_id="L21_V001",
+            shot_id="L21_V001_S000",
+            timestamp_ms=0,
+        )
+        ocr_records = [
+            SimpleNamespace(
+                n=1,
+                text="full_frame_text",
+                language="vi",
+                x_min=0.0,
+                x_max=1.0,
+                y_min=0.0,
+                y_max=1.0,
+            )
+        ]
+
+        document = self.builder.build_ocr_document(
+            frame,
+            ocr_records,
+            index_build_id="build-test",
+        )
+
+        self.assertIsNotNone(document)
+        self.assertEqual(document.content, "full_frame_text")
+        self.assertEqual(document.regions[0]["x_min"], 0.0)
+        self.assertEqual(document.regions[0]["x_max"], 1.0)
+
+    def test_caption_document_resolves_video_id_from_clip_shot_chain(self) -> None:
+        clip_caption = SimpleNamespace(
+            caption_id=12,
+            frame_id=None,
+            clip_id="C001",
+            shot_id=None,
+            caption_text="Clip caption",
+            clip=SimpleNamespace(
+                shot=SimpleNamespace(video_id="L21_V002")
+            ),
+            model_name="vlm",
+            model_version="1.0",
+            prompt_version="p1",
+        )
+
+        doc = self.builder.build_caption_document(
+            clip_caption,
+            index_build_id="build-test",
+        )
+
+        self.assertIsNotNone(doc)
+        self.assertEqual(doc.video_id, "L21_V002")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

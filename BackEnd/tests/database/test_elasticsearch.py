@@ -116,6 +116,32 @@ class TextSearchContractTests(unittest.TestCase):
         self.assertEqual(document.keywords, ("AIC", "AIC", "HCMC"))
         self.assertEqual(keywords, ["AIC", "AIC", "HCMC"])
 
+    def test_text_search_query_pagination_and_sorting(self) -> None:
+        query_default = TextSearchQuery(query_text="test")
+        self.assertEqual(query_default.from_, 0)
+        self.assertEqual(query_default.page, 1)
+
+        query_page = TextSearchQuery(query_text="test", top_k=20, page=3)
+        self.assertEqual(query_page.from_, 40)
+
+        with self.assertRaisesRegex(ValueError, "page"):
+            TextSearchQuery(query_text="test", page=0)
+        with self.assertRaisesRegex(ValueError, "from_"):
+            TextSearchQuery(query_text="test", from_=-1)
+
+    def test_text_search_query_boundary_values(self) -> None:
+        query_min = TextSearchQuery(query_text="min", top_k=1, from_=0, sort_by="score")
+        self.assertEqual(query_min.top_k, 1)
+        self.assertEqual(query_min.from_, 0)
+
+        query_max = TextSearchQuery(query_text="max", top_k=10000, from_=5000, sort_by="-timestamp_ms")
+        self.assertEqual(query_max.top_k, 10000)
+        self.assertEqual(query_max.from_, 5000)
+
+    def test_text_search_query_multiline_whitespace_and_newlines_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "query_text"):
+            TextSearchQuery(query_text="  \n \t  ")
+
     def test_text_search_query_normalizes_single_string_inputs(self) -> None:
         query = TextSearchQuery(
             query_text="le trao giai",
@@ -127,6 +153,23 @@ class TextSearchContractTests(unittest.TestCase):
 
 
 class ElasticsearchManagerTests(unittest.TestCase):
+    def test_index_documents_invalid_chunk_size_raises_value_error(self) -> None:
+        manager = ElasticsearchManager(client=FakeElasticsearchClient())
+        with self.assertRaisesRegex(ValueError, "chunk_size"):
+            manager.index_documents([make_document()], index_name="test", chunk_size=0)
+
+    def test_search_sort_payload_generation(self) -> None:
+        client = FakeElasticsearchClient()
+        manager = ElasticsearchManager(client=client)
+
+        manager.search(TextSearchQuery(query_text="test", sort_by="score"))
+        self.assertEqual(client.search_calls[-1]["body"]["sort"], ["_score"])
+
+        manager.search(TextSearchQuery(query_text="test", sort_by="-timestamp_ms"))
+        self.assertEqual(client.search_calls[-1]["body"]["sort"], [{"timestamp_ms": "desc"}])
+
+        manager.search(TextSearchQuery(query_text="test", sort_by="video_id"))
+        self.assertEqual(client.search_calls[-1]["body"]["sort"], [{"video_id": "asc"}])
     def test_create_index_contains_required_mapping_and_analyzer(self) -> None:
         client = FakeElasticsearchClient()
         manager = ElasticsearchManager(client=client)
@@ -135,6 +178,7 @@ class ElasticsearchManagerTests(unittest.TestCase):
 
         body = client.indices.created[0]["body"]
         self.assertIn("aic_vi_text", body["settings"]["analysis"]["analyzer"])
+        self.assertIn("aic_shingle", body["settings"]["analysis"]["filter"])
         properties = body["mappings"]["properties"]
         for field_name in (
             "doc_id",
@@ -194,6 +238,31 @@ class ElasticsearchManagerTests(unittest.TestCase):
 
         self.assertEqual(summary, {"indexed": 1, "failed": 0})
         self.assertEqual(len(captured_actions), 1)
+
+    def test_index_documents_splits_large_batch_into_chunks(self) -> None:
+        bulk_batches = []
+
+        def fake_bulk(client, actions, **kwargs):
+            actions_list = list(actions)
+            bulk_batches.append(actions_list)
+            return (len(actions_list), [])
+
+        manager = ElasticsearchManager(
+            client=FakeElasticsearchClient(),
+            bulk_helper=fake_bulk,
+        )
+        docs = [
+            make_document(doc_id=f"ocr_frame:{i}:v1", entity_id=f"ent_{i}")
+            for i in range(5)
+        ]
+
+        summary = manager.index_documents(docs, index_name="test-index", chunk_size=2)
+
+        self.assertEqual(summary, {"indexed": 5, "failed": 0})
+        self.assertEqual(len(bulk_batches), 3)  # 2 + 2 + 1 = 5 docs in 3 chunks
+        self.assertEqual(len(bulk_batches[0]), 2)
+        self.assertEqual(len(bulk_batches[1]), 2)
+        self.assertEqual(len(bulk_batches[2]), 1)
 
     def test_index_documents_requires_explicit_physical_index_name(self) -> None:
         bulk_calls = []
@@ -417,10 +486,20 @@ class ElasticsearchManagerTests(unittest.TestCase):
         self.assertTrue(hasattr(module, "build_sample_documents"))
 
 
+def is_elasticsearch_reachable() -> bool:
+    url = os.getenv("ELASTICSEARCH_URL")
+    if not url or os.getenv("ELASTICSEARCH_ALLOW_TEST_INDEX_DELETE") != "true":
+        return False
+    try:
+        import requests
+        return requests.get(url, timeout=1).status_code == 200
+    except Exception:
+        return False
+
+
 @unittest.skipUnless(
-    os.getenv("ELASTICSEARCH_URL")
-    and os.getenv("ELASTICSEARCH_ALLOW_TEST_INDEX_DELETE") == "true",
-    "ELASTICSEARCH_URL and ELASTICSEARCH_ALLOW_TEST_INDEX_DELETE=true are required.",
+    is_elasticsearch_reachable(),
+    "Active Elasticsearch server on ELASTICSEARCH_URL and ELASTICSEARCH_ALLOW_TEST_INDEX_DELETE=true are required.",
 )
 class ElasticsearchLiveIntegrationTests(unittest.TestCase):
     """Optional live checks using only namespaced test indexes and aliases."""
