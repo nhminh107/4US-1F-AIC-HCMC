@@ -121,6 +121,9 @@ class ShotExtractor:
     def _resolve_video_path(self, video_id: str) -> Path:
         video_path = self.video_dir / f"{video_id}.mp4"
         if not video_path.is_file():
+            candidates = sorted(PROJECT_ROOT.glob(f"data/**/{video_id}.mp4"))
+            if candidates:
+                return candidates[0]
             raise FileNotFoundError(f"Video not found for '{video_id}': {video_path}")
         return video_path
 
