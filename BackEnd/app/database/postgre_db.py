@@ -7,20 +7,32 @@ from datetime import date
 from typing import Any, TypeVar
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from BackEnd.app.database.adapter import (
+    clip_window_metadata_from_clip_window,
+    frame_metadata_from_frame,
+    shot_metadata_from_shot,
+)
 from BackEnd.app.database.models import (
     Base,
     Caption,
+    ClipWindow,
     Frame,
     FrameEmbeddingRecord,
     OCR,
     Shot,
     TranscriptSegment,
     Video,
+)
+
+from BackEnd.app.contracts.pipeline import (
+    ClipWindowMetadata,
+    FrameMetadata,
+    ShotMetadata,
 )
 
 load_dotenv()
@@ -296,6 +308,86 @@ class PostgreManager:
             )
             return self._persist(session, record)
 
+    def get_frame_record_by_frame_id(self, frame_id: str) -> FrameMetadata:
+        with self.session_factory() as session:
+            data = session.get(Frame, frame_id)
+            if data is None:
+                raise ValueError(f"Frame '{frame_id}' does not exist.")
+
+            return frame_metadata_from_frame(data)
+
+    def get_list_frame_in_shot(self, shot_id: str) -> list[FrameMetadata]:
+        """Return all frames belonging to a shot, ordered by frame index."""
+
+        with self.session_factory() as session:
+            if session.get(Shot, shot_id) is None:
+                raise ValueError(f"Shot '{shot_id}' does not exist.")
+
+            statement = (
+                select(Frame)
+                .where(Frame.shot_id == shot_id)
+                .order_by(Frame.frame_idx)
+            )
+            frames = session.scalars(statement).all()
+
+            return [frame_metadata_from_frame(frame) for frame in frames]
+
+    def get_list_shot_in_video(self, video_id: str) -> list[ShotMetadata]:
+        """Return all shots belonging to a video, ordered by shot index."""
+
+        with self.session_factory() as session:
+            if session.get(Video, video_id) is None:
+                raise ValueError(f"Video '{video_id}' does not exist.")
+
+            statement = (
+                select(Shot)
+                .where(Shot.video_id == video_id)
+                .order_by(Shot.shot_index)
+            )
+            shots = session.scalars(statement).all()
+
+            return [shot_metadata_from_shot(shot) for shot in shots]
+
+    def get_list_clip_in_shot(self, shot_id: str) -> list[ClipWindowMetadata]:
+        """Return all clips belonging to a shot, ordered by start time."""
+
+        with self.session_factory() as session:
+            if session.get(Shot, shot_id) is None:
+                raise ValueError(f"Shot '{shot_id}' does not exist.")
+
+            statement = (
+                select(ClipWindow)
+                .where(ClipWindow.shot_id == shot_id)
+                .order_by(ClipWindow.start_ms)
+            )
+            clips = session.scalars(statement).all()
+
+            return [
+                clip_window_metadata_from_clip_window(clip) for clip in clips
+            ]
 
 # Backward-compatible name for existing imports.
-Postgre_Manager = PostgreManager
+#Postgre_Manager = PostgreManager
+
+
+def main() -> None:
+    """Fetch and print one frame to verify the get operation."""
+
+    db = PostgreManager()
+    # db.add_video("1", "1")
+    # db.add_shot("1", "1", 0, 0, 1000)
+    # db.add_frame(
+    #     "1",
+    #     "1",
+    #     "1",
+    #     0,
+    #     30.0,
+    #     0,
+    #     "keyframe",
+    #     "extracted",
+    # )
+    print(db.get_frame_record_by_frame_id("1"))
+
+
+if __name__ == "__main__":
+    main()
