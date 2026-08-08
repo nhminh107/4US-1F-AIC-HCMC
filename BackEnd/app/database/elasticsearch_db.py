@@ -79,12 +79,22 @@ class ElasticsearchManager:
                         "aic_ascii_folding": {
                             "type": "asciifolding",
                             "preserve_original": True,
-                        }
+                        },
+                        "aic_shingle": {
+                            "type": "shingle",
+                            "min_shingle_size": 2,
+                            "max_shingle_size": 3,
+                            "output_unigrams": True,
+                        },
                     },
                     "analyzer": {
                         "aic_vi_text": {
                             "tokenizer": "standard",
-                            "filter": ["lowercase", "aic_ascii_folding"],
+                            "filter": [
+                                "lowercase",
+                                "aic_ascii_folding",
+                                "aic_shingle",
+                            ],
                         }
                     },
                 }
@@ -172,9 +182,12 @@ class ElasticsearchManager:
         *,
         index_name: str | None = None,
         refresh: bool = False,
+        chunk_size: int = 500,
     ) -> dict[str, int]:
         """Bulk upsert text documents and return a small result summary."""
 
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than 0.")
         valid_documents = [doc for doc in (documents or []) if doc is not None]
         if not valid_documents:
             return {"indexed": 0, "failed": 0}
@@ -190,28 +203,35 @@ class ElasticsearchManager:
         if len(set(doc_ids)) != len(doc_ids):
             raise ValueError("Duplicate doc_id values are not allowed in one batch.")
 
-        actions = [
-            {
-                "_op_type": "index",
-                "_index": index_name,
-                "_id": document.doc_id,
-                "_source": self._document_source(document),
-            }
-            for document in valid_documents
-        ]
+        total_indexed = 0
+        total_failed = 0
 
-        try:
-            success_count, errors = self.bulk_helper(
-                self.client,
-                actions,
-                refresh=refresh,
-                raise_on_error=False,
-                request_timeout=self.request_timeout,
-            )
-        except Exception as error:  # noqa: BLE001 - preserve external helper context.
-            raise RuntimeError("Elasticsearch bulk indexing failed.") from error
+        for i in range(0, len(valid_documents), chunk_size):
+            chunk = valid_documents[i : i + chunk_size]
+            actions = [
+                {
+                    "_op_type": "index",
+                    "_index": index_name,
+                    "_id": document.doc_id,
+                    "_source": self._document_source(document),
+                }
+                for document in chunk
+            ]
 
-        return {"indexed": int(success_count), "failed": len(errors or [])}
+            try:
+                success_count, errors = self.bulk_helper(
+                    self.client,
+                    actions,
+                    refresh=refresh,
+                    raise_on_error=False,
+                    request_timeout=self.request_timeout,
+                )
+                total_indexed += int(success_count)
+                total_failed += len(errors or [])
+            except Exception as error:  # noqa: BLE001 - preserve external helper context.
+                raise RuntimeError("Elasticsearch bulk indexing failed.") from error
+
+        return {"indexed": total_indexed, "failed": total_failed}
 
     def search(self, query: TextSearchQuery) -> list[TextSearchHit]:
         """Search source aliases and parse raw Elasticsearch hits."""
@@ -321,6 +341,7 @@ class ElasticsearchManager:
 
         body: dict[str, Any] = {
             "size": query.top_k,
+            "from": query.from_,
             "query": {
                 "bool": {
                     "filter": filters,
@@ -329,6 +350,14 @@ class ElasticsearchManager:
                 }
             },
         }
+        if query.sort_by:
+            if query.sort_by == "score":
+                body["sort"] = ["_score"]
+            elif query.sort_by.startswith("-"):
+                field_name = query.sort_by[1:]
+                body["sort"] = [{field_name: "desc"}]
+            else:
+                body["sort"] = [{query.sort_by: "asc"}]
         if query.use_highlight:
             body["highlight"] = {"fields": {"content": {}, "regions.text": {}}}
         return body
