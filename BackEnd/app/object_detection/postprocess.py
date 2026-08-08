@@ -12,12 +12,19 @@ from BackEnd.app.object_detection.schemas import BoundingBox, Detection
 
 def filter_by_confidence(
     detections: Iterable[Detection],
-    confidence_threshold: float,
+    confidence_threshold: float | None = None,
+    *,
+    threshold: float | None = None,
 ) -> list[Detection]:
+    resolved_threshold = confidence_threshold if confidence_threshold is not None else threshold
+    if resolved_threshold is None:
+        raise ValueError("confidence_threshold is required.")
+    if not 0.0 <= resolved_threshold <= 1.0:
+        raise ValueError("confidence_threshold must be between 0 and 1.")
     return [
         detection
         for detection in detections
-        if detection.confidence >= confidence_threshold
+        if detection.confidence >= resolved_threshold
     ]
 
 
@@ -27,7 +34,7 @@ def filter_by_classes(
     class_names: set[str] | None = None,
     class_ids: set[str] | None = None,
 ) -> list[Detection]:
-    if not class_names and not class_ids:
+    if class_names is None and class_ids is None:
         return list(detections)
 
     normalized_names = {name.strip().lower() for name in class_names or set()}
@@ -38,6 +45,19 @@ def filter_by_classes(
         if detection.class_id in allowed_ids
         or detection.class_name.strip().lower() in normalized_names
     ]
+
+
+def filter_by_class(
+    detections: Iterable[Detection],
+    *,
+    class_ids: set[str] | None = None,
+    class_names: set[str] | None = None,
+) -> list[Detection]:
+    return filter_by_classes(
+        detections,
+        class_ids=class_ids,
+        class_names=class_names,
+    )
 
 
 def clip_detections(

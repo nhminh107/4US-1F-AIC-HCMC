@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import warnings
+
 from BackEnd.app.contracts.pipeline import ClassMetadata
 
+_MAX_CLASS_INDEX = 999
 
 COCO_CLASSES: tuple[str, ...] = (
     "person",
@@ -104,15 +107,35 @@ class ClassMapper:
         else:
             self._index_to_name = {index: str(name) for index, name in enumerate(names)}
 
+        if self._index_to_name and max(self._index_to_name) > _MAX_CLASS_INDEX:
+            warnings.warn(
+                f"Class index exceeds cNNN limit ({_MAX_CLASS_INDEX}). "
+                "Use a wider class_id strategy before persisting these classes.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         self._name_to_index = {
             _normalize_name(name): index for index, name in self._index_to_name.items()
         }
 
-    def class_id_for_index(self, class_index: int) -> str:
-        return f"c{int(class_index):03d}"
+    @staticmethod
+    def class_id_for_index(class_index: int) -> str:
+        resolved_index = int(class_index)
+        if resolved_index < 0:
+            raise ValueError("class_index must be non-negative.")
+        if resolved_index > _MAX_CLASS_INDEX:
+            raise ValueError(f"class_index must be <= {_MAX_CLASS_INDEX}.")
+        return f"c{resolved_index:03d}"
 
     def name_for_index(self, class_index: int) -> str:
         return self._index_to_name.get(int(class_index), f"class_{int(class_index)}")
+
+    def class_name_for_index(self, class_index: int) -> str:
+        resolved_index = int(class_index)
+        if resolved_index not in self._index_to_name:
+            raise KeyError(resolved_index)
+        return self._index_to_name[resolved_index]
 
     def index_for_name(self, class_name: str) -> int | None:
         return self._name_to_index.get(_normalize_name(class_name))
@@ -137,3 +160,6 @@ class ClassMapper:
             )
             for class_index, class_name in sorted(self._index_to_name.items())
         ]
+
+    def to_class_metadata(self) -> list[ClassMetadata]:
+        return self.to_metadata()
