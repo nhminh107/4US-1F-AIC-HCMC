@@ -10,6 +10,9 @@ from BackEnd.app.embedding.common.errors import DecodeError, MediaNotFoundError
 class PyAVVideoDecoder:
     """Decode nearest RGB frames with PyAV."""
 
+    def __init__(self, *, allow_full_scan_fallback: bool = True) -> None:
+        self.allow_full_scan_fallback = bool(allow_full_scan_fallback)
+
     def decode_nearest_frames(
         self,
         video_asset: VideoAsset,
@@ -46,6 +49,7 @@ class PyAVVideoDecoder:
         }
         seek_count = 0
         decoded_frame_count = 0
+        fallback_scan_count = 0
         try:
             with av.open(str(video_asset.video_uri)) as container:
                 stream = container.streams.video[0]
@@ -81,6 +85,9 @@ class PyAVVideoDecoder:
                             actual_by_timestamp[requested_ms] = actual_ms
                             status_by_timestamp[requested_ms] = "success"
                     except Exception:
+                        if not self.allow_full_scan_fallback:
+                            continue
+                        fallback_scan_count += 1
                         try:
                             container.seek(0, any_frame=False, stream=stream)
                             candidates = []
@@ -122,6 +129,7 @@ class PyAVVideoDecoder:
             metrics={
                 "open_count": 1,
                 "seek_count": seek_count,
+                "fallback_scan_count": fallback_scan_count,
                 "decoded_frame_count": decoded_frame_count,
                 "requested_frame_count": len(requested_timestamps),
                 "failed_frame_count": sum(status != "success" for status in statuses),
