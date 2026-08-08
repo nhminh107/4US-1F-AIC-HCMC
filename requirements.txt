@@ -26,3 +26,7 @@ sqlalchemy>=2.0.0
 python-dotenv>=1.0.0
 pytest>=8.0.0
 ultralytics
+trackers==2.6.0
+supervision==0.30.0
+tensorflow[and-cuda]>=2.16,<2.19
+tensorflow-hub>=0.16,<0.17

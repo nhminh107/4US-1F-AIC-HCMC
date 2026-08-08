@@ -316,6 +316,22 @@ class PostgreManager:
 
             return frame_metadata_from_frame(data)
 
+    def get_frame_record_by_video_id(self, video_id: str) -> list[FrameMetadata]:
+        """Return all frames belonging to a video, ordered by frame index."""
+
+        with self.session_factory() as session:
+            if session.get(Video, video_id) is None:
+                raise ValueError(f"Video '{video_id}' does not exist.")
+
+            statement = (
+                select(Frame)
+                .where(Frame.video_id == video_id)
+                .order_by(Frame.frame_idx)
+            )
+            frames = session.scalars(statement).all()
+
+            return [frame_metadata_from_frame(frame) for frame in frames]
+
     def get_list_frame_in_shot(self, shot_id: str) -> list[FrameMetadata]:
         """Return all frames belonging to a shot, ordered by frame index."""
 
