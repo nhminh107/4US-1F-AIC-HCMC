@@ -52,14 +52,13 @@ class FrameMetadata:
     timestamp_ms: int
     fps: float
     frame_idx: int
-    frame_role: FrameRole
-    source: FrameSource
+    frame_role: FrameRole | None = None
+    source: FrameSource | None = None
     n: int | None = None
     pts_time: int | None = None
     frame_path: Path | None = None
     width: int | None = None
     height: int | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class ClassMetadata:
