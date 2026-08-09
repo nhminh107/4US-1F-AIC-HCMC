@@ -1,9 +1,9 @@
 """Quick object-detection smoke test on a subset of keyframes.
 
 Usage:
-    python -m BackEnd.app.object_detection.test_detection --limit 20
-    python -m BackEnd.app.object_detection.test_detection --video K01_V001 --limit 20
-    python -m BackEnd.app.object_detection.test_detection --classes person,car
+    python -m BackEnd.tests.object_detection.smoke_detection --limit 20
+    python -m BackEnd.tests.object_detection.smoke_detection --video K01_V001 --limit 20
+    python -m BackEnd.tests.object_detection.smoke_detection --classes person,car
 """
 
 from __future__ import annotations

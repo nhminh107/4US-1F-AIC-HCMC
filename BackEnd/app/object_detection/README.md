@@ -97,19 +97,19 @@ BackEnd/app/object_detection/output/object_detection_results.json
 Smoke test co goi detector that:
 
 ```bash
-python3 -m BackEnd.app.object_detection.test_detection --limit 10
+python3 -m BackEnd.tests.object_detection.smoke_detection --limit 10
 ```
 
 Loc theo video:
 
 ```bash
-python3 -m BackEnd.app.object_detection.test_detection --video K01_V001 --limit 10
+python3 -m BackEnd.tests.object_detection.smoke_detection --video K01_V001 --limit 10
 ```
 
 Loc theo shot:
 
 ```bash
-python3 -m BackEnd.app.object_detection.test_detection --video K01_V001 --shot-min 1 --shot-max 5
+python3 -m BackEnd.tests.object_detection.smoke_detection --video K01_V001 --shot-min 1 --shot-max 5
 ```
 
 ## Cach chay unit test
@@ -117,13 +117,13 @@ python3 -m BackEnd.app.object_detection.test_detection --video K01_V001 --shot-m
 Unit test khong load YOLO/OpenCV, chi kiem tra logic deterministic:
 
 ```bash
-python3 -m BackEnd.app.object_detection.test
+python3 -m unittest BackEnd.tests.object_detection.test_object_detection
 ```
 
 Neu dung pytest:
 
 ```bash
-pytest BackEnd/app/object_detection/test.py
+pytest BackEnd/tests/object_detection/test_object_detection.py
 ```
 
 File test cover:
@@ -150,9 +150,13 @@ object_detection/
 ├── schemas.py
 ├── utils.py
 ├── run_detection.py
-├── test_detection.py
-├── test.py
 └── README.md
+```
+
+```text
+BackEnd/tests/object_detection/
+├── test_object_detection.py
+└── smoke_detection.py
 ```
 
 ### `detector.py`
@@ -349,7 +353,7 @@ Chuc nang:
 - Chay detection theo chunk.
 - Export JSON sau moi chunk de tranh mat ket qua neu bi dung giua chung.
 
-### `test_detection.py`
+### `BackEnd/tests/object_detection/smoke_detection.py`
 
 Smoke test co goi model that.
 
@@ -359,7 +363,7 @@ Chuc nang:
 - Ho tro filter theo video, shot range, limit.
 - In so object detect duoc theo tung frame.
 
-### `test.py`
+### `BackEnd/tests/object_detection/test_object_detection.py`
 
 Unit test logic.
 
@@ -383,7 +387,9 @@ Module duoc chia file theo boundary ro rang:
 - `class_mapper.py`: tach mapping class de DB/tracking/retrieval co chung mot dinh danh.
 - `exporter.py`: tach output format va contract conversion khoi inference.
 - `run_detection.py`: giu orchestration/CLI rieng, khong tron vao detector.
-- `test.py` va `test_detection.py`: tach unit test nhanh voi smoke test inference that.
+- `BackEnd/tests/object_detection/test_object_detection.py` va
+  `BackEnd/tests/object_detection/smoke_detection.py`: tach unit test nhanh voi
+  smoke test inference that.
 
 Cach chia nay giup thay YOLO bang model khac ma van giu duoc pipeline chung:
 

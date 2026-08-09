@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from BackEnd.app.object_detection.class_mapper import ClassMapper
 from BackEnd.app.object_detection.schemas import Detection
 
 
@@ -15,7 +14,6 @@ class Detector(ABC):
 
     model_name: str
     model_version: str | None
-    class_mapper: ClassMapper
 
     @abstractmethod
     def detect(

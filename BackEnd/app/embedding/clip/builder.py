@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from BackEnd.app.clip_extractor import plan_clip_windows
 from BackEnd.app.contracts.embedding import ClipRecord
 from BackEnd.app.contracts.pipeline import ShotMetadata
 from BackEnd.app.embedding.CONFIG import ClipBuilderConfig
@@ -22,11 +23,13 @@ def build_clips(
             continue
         seen_shots.add(shot.shot_id)
 
-        duration_ms = shot.end_ms - shot.start_ms
-        intervals = (
-            [(shot.start_ms, shot.end_ms, "full_shot")]
-            if duration_ms <= config.window_ms
-            else _fixed_windows(shot.start_ms, shot.end_ms, config)
+        intervals = plan_clip_windows(
+            shot.start_ms,
+            shot.end_ms,
+            split_threshold_ms=config.window_ms,
+            window_ms=config.window_ms,
+            stride_ms=config.stride_ms,
+            min_new_window_gap_ms=config.min_new_window_gap_ms,
         )
         for start_ms, end_ms, scale_type in intervals:
             clips.append(
@@ -51,33 +54,6 @@ def build_clips(
                 )
             )
     return clips
-
-
-def _fixed_windows(
-    start_ms: int,
-    end_ms: int,
-    config: ClipBuilderConfig,
-) -> list[tuple[int, int, str]]:
-    intervals: list[tuple[int, int, str]] = []
-    current_start = start_ms
-    while current_start + config.window_ms < end_ms:
-        intervals.append((current_start, current_start + config.window_ms, "fixed_window"))
-        current_start += config.stride_ms
-
-    tail_start = end_ms - config.window_ms
-    if not intervals or tail_start - intervals[-1][0] >= config.min_new_window_gap_ms:
-        intervals.append((tail_start, end_ms, "fixed_window"))
-    else:
-        intervals[-1] = (tail_start, end_ms, "fixed_window")
-
-    deduped: list[tuple[int, int, str]] = []
-    seen = set()
-    for interval in intervals:
-        key = (interval[0], interval[1])
-        if key not in seen:
-            seen.add(key)
-            deduped.append(interval)
-    return deduped
 
 
 def _validate_shot(shot: ShotMetadata) -> None:
