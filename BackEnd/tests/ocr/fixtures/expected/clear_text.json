@@ -1,0 +1,10 @@
+{
+  "image": "clear_text.jpg",
+  "description": "Ảnh nền trắng, 1 dòng chữ in hoa không dấu, tương phản cao — dùng cho test_monkeyocr_engine.py (đánh dấu @pytest.mark.gpu, chỉ chạy khi có checkpoint thật).",
+  "expected_regions": [
+    {
+      "text": "XIN CHAO VIET NAM",
+      "language": "vi"
+    }
+  ]
+}
