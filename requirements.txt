@@ -31,3 +31,4 @@ trackers==2.6.0
 supervision==0.30.0
 tensorflow[and-cuda]>=2.16,<2.19
 tensorflow-hub>=0.16,<0.17
+chunkformer
