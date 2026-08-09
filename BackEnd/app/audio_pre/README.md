@@ -10,6 +10,23 @@ runs WebRTC VAD, and returns `list[AudioSegment]`.
 It does not transcribe, detect language, diarize speakers, or alter visual shot
 boundaries.
 
+## Full-video Usage
+
+Use `preprocess_full_video()` when the entire video should be treated as one
+shot. Only `VideoMetadata` is required; output defaults to `output/audio_pre`
+and the return type remains `list[AudioSegment]`.
+
+```python
+from pathlib import Path
+
+from BackEnd.app.audio_pre import preprocess_full_video
+from BackEnd.app.contracts.pipeline import VideoMetadata
+
+segments = preprocess_full_video(
+    VideoMetadata(video_id="video001", video_path=Path("video001.mp4"))
+)
+```
+
 ## Programmatic Usage
 
 ```python

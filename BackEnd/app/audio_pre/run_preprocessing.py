@@ -16,6 +16,8 @@ from .schemas import AudioSegment
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_OUTPUT_DIR = Path("output/audio_pre")
+
 
 def segment_shot(
     raw_audio_path: Path,
@@ -150,6 +152,44 @@ def preprocess_video(
             sum(segment.has_speech for segment in results),
         )
         return results
+    finally:
+        utils.cleanup_file(raw_wav)
+
+
+def preprocess_full_video(
+    video: VideoMetadata,
+    *,
+    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    language_hint: str | None = None,
+) -> list[AudioSegment]:
+    """Process a complete video as one shot and return the existing output type."""
+
+    if not extractor.has_audio_stream(video.video_path):
+        logger.warning("Video has no audio stream: %s", video.video_id)
+        return []
+
+    raw_wav = extractor.get_or_extract_raw_audio(video, output_dir)
+    try:
+        audio_duration_ms = extractor.get_duration_ms(raw_wav)
+        end_ms = int(audio_duration_ms)
+        if end_ms <= 0:
+            raise ValueError(
+                f"Audio duration must be at least 1 ms: {video.video_id}."
+            )
+
+        full_video_shot = ShotMetadata(
+            shot_id=video.video_id,
+            video_id=video.video_id,
+            shot_index=0,
+            start_ms=0,
+            end_ms=end_ms,
+        )
+        return preprocess_video(
+            video,
+            [full_video_shot],
+            output_dir,
+            language_hint=language_hint,
+        )
     finally:
         utils.cleanup_file(raw_wav)
 

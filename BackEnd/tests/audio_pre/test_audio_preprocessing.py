@@ -15,7 +15,12 @@ from BackEnd.app.audio_pre import extractor
 from BackEnd.app.audio_pre import utils, vad
 from BackEnd.app.audio_pre.exporter import save_audio_segments_json
 from BackEnd.app.audio_pre.normalizer import normalize_audio
-from BackEnd.app.audio_pre.run_preprocessing import preprocess_video, segment_shot
+from BackEnd.app.audio_pre.run_preprocessing import (
+    DEFAULT_OUTPUT_DIR,
+    preprocess_full_video,
+    preprocess_video,
+    segment_shot,
+)
 from BackEnd.app.audio_pre.schemas import AudioSegment
 from BackEnd.app.contracts.pipeline import ShotMetadata, VideoMetadata
 
@@ -163,6 +168,51 @@ class AudioPreprocessingContractTests(unittest.TestCase):
         video = VideoMetadata("video-1", self.root / "video-1.mp4")
         with patch("BackEnd.app.audio_pre.run_preprocessing.extractor.has_audio_stream", return_value=False):
             self.assertEqual(preprocess_video(video, [], self.root), [])
+
+    def test_preprocess_full_video_wraps_complete_audio_as_one_shot(self) -> None:
+        video = VideoMetadata("video-1", self.root / "video-1.mp4")
+        raw_path = self._write_wav(self.root / "video-1_raw.wav")
+        expected_segments: list[AudioSegment] = []
+
+        with (
+            patch(
+                "BackEnd.app.audio_pre.run_preprocessing.extractor.has_audio_stream",
+                return_value=True,
+            ),
+            patch(
+                "BackEnd.app.audio_pre.run_preprocessing.extractor.get_or_extract_raw_audio",
+                return_value=raw_path,
+            ),
+            patch(
+                "BackEnd.app.audio_pre.run_preprocessing.extractor.get_duration_ms",
+                return_value=2500.75,
+            ),
+            patch(
+                "BackEnd.app.audio_pre.run_preprocessing.preprocess_video",
+                return_value=expected_segments,
+            ) as preprocess,
+        ):
+            segments = preprocess_full_video(video)
+
+        self.assertIs(segments, expected_segments)
+        preprocess.assert_called_once()
+        wrapped_video, wrapped_shots, wrapped_output_dir = preprocess.call_args.args
+        self.assertIs(wrapped_video, video)
+        self.assertEqual(wrapped_output_dir, DEFAULT_OUTPUT_DIR)
+        self.assertEqual(
+            wrapped_shots,
+            [
+                ShotMetadata(
+                    shot_id="video-1",
+                    video_id="video-1",
+                    shot_index=0,
+                    start_ms=0,
+                    end_ms=2500,
+                )
+            ],
+        )
+        self.assertIsNone(preprocess.call_args.kwargs["language_hint"])
+        self.assertFalse(raw_path.exists())
 
     def test_preprocess_video_skips_failed_shot_and_deletes_raw(self) -> None:
         video = VideoMetadata("video-1", self.root / "video-1.mp4")
