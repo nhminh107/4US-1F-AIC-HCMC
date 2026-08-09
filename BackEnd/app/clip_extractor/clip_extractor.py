@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 import shutil
 import subprocess
@@ -50,10 +49,12 @@ def _default_clip_id(shot: ShotRecord, one_based_index: int) -> str:
 
 @dataclass(frozen=True)
 class ClipExtractorConfig:
-    """Configuration for deterministic fixed-duration Shot segmentation."""
+    """Configuration for deterministic overlapping Clip windows."""
 
     split_threshold_ms: int = 10_000
     max_clip_duration_ms: int = 10_000
+    stride_ms: int = 8_000
+    min_new_window_gap_ms: int = 2_000
     sampling_fps: Optional[float] = None
     materialize_files: bool = False
     output_root: Path = Path("data/clips")
@@ -71,9 +72,22 @@ class ClipExtractorConfig:
             raise ValueError("split_threshold_ms must be greater than 0")
         if self.max_clip_duration_ms <= 0:
             raise ValueError("max_clip_duration_ms must be greater than 0")
-        if self.max_clip_duration_ms > self.split_threshold_ms:
+        if self.split_threshold_ms > self.max_clip_duration_ms:
             raise ValueError(
-                "max_clip_duration_ms must be less than or equal to split_threshold_ms"
+                "split_threshold_ms must be less than or equal to "
+                "max_clip_duration_ms"
+            )
+        if self.stride_ms <= 0:
+            raise ValueError("stride_ms must be greater than 0")
+        if self.stride_ms > self.max_clip_duration_ms:
+            raise ValueError(
+                "stride_ms must be less than or equal to max_clip_duration_ms"
+            )
+        if self.min_new_window_gap_ms <= 0:
+            raise ValueError("min_new_window_gap_ms must be greater than 0")
+        if self.min_new_window_gap_ms > self.stride_ms:
+            raise ValueError(
+                "min_new_window_gap_ms must be less than or equal to stride_ms"
             )
         if self.sampling_fps is not None and self.sampling_fps <= 0:
             raise ValueError("sampling_fps must be greater than 0")
@@ -86,8 +100,8 @@ class ClipExtractor:
 
     Standard behavior from ``pipeline_offline.md``:
 
-    * a Shot of 10 seconds or less is not split and therefore returns ``[]``;
-    * a longer Shot is divided into two or more continuous Clip records;
+    * a Shot of 10 seconds or less becomes one full-Shot Clip;
+    * a longer Shot becomes fixed-duration windows with contextual overlap;
     * output records contain every column required by ``clipwindow``;
     * records are produced without saving video files unless explicitly enabled.
 
@@ -174,26 +188,19 @@ class ClipExtractor:
         """Create Clip metadata only; this method performs no video I/O."""
 
         shot_record = ShotRecord.from_contract(shot)
-        duration_ms = shot_record.duration_ms
-
-        if duration_ms <= self.config.split_threshold_ms:
-            return []
-
-        clip_count = int(math.ceil(duration_ms / self.config.max_clip_duration_ms))
-        if clip_count < 2:
-            clip_count = 2
-
-        # Balance the duration across all clips.  This avoids creating a nearly
-        # empty tail clip for a Shot that is only slightly over the threshold.
-        base_duration, extra_ms = divmod(duration_ms, clip_count)
+        intervals = plan_clip_windows(
+            shot_record.start_ms,
+            shot_record.end_ms,
+            split_threshold_ms=self.config.split_threshold_ms,
+            window_ms=self.config.max_clip_duration_ms,
+            stride_ms=self.config.stride_ms,
+            min_new_window_gap_ms=self.config.min_new_window_gap_ms,
+        )
         sampling_fps = self._sampling_fps(shot_record)
-        cursor = shot_record.start_ms
         clips = []
         clip_ids = set()
 
-        for zero_based_index in range(clip_count):
-            part_duration = base_duration + (1 if zero_based_index < extra_ms else 0)
-            end_ms = cursor + part_duration
+        for zero_based_index, (start_ms, end_ms, _) in enumerate(intervals):
             one_based_index = zero_based_index + 1
             clip_id = str(self._clip_id_factory(shot_record, one_based_index)).strip()
             if not clip_id:
@@ -206,7 +213,7 @@ class ClipExtractor:
                 raise InvalidShotError("clip_id_factory returned a duplicate clip_id")
             clip_ids.add(clip_id)
 
-            start_frame_idx = self._frame_boundary(shot_record, cursor)
+            start_frame_idx = self._frame_boundary(shot_record, start_ms)
             end_frame_idx = self._frame_boundary(shot_record, end_ms)
 
             clips.append(
@@ -214,7 +221,7 @@ class ClipExtractor:
                     clip_id=clip_id,
                     shot_id=shot_record.shot_id,
                     video_id=shot_record.video_id,
-                    start_ms=cursor,
+                    start_ms=start_ms,
                     end_ms=end_ms,
                     start_frame_idx=start_frame_idx,
                     end_frame_idx=end_frame_idx,
@@ -222,9 +229,8 @@ class ClipExtractor:
                     clip_index=one_based_index,
                 )
             )
-            cursor = end_ms
 
-        self._assert_complete_partition(shot_record, clips)
+        self._assert_valid_windows(shot_record, clips)
         return clips
 
     def _sampling_fps(self, shot: ShotRecord) -> float:
@@ -378,29 +384,84 @@ class ClipExtractor:
         ).strip("._")
         return safe or "unnamed"
 
-    def _assert_complete_partition(
+    def _assert_valid_windows(
         self, shot: ShotRecord, clips: Sequence[ClipRecord]
     ) -> None:
         if not clips:
-            raise AssertionError("A long Shot must produce at least two Clips")
-        if clips[0].start_ms != shot.start_ms or clips[-1].end_ms != shot.end_ms:
-            raise AssertionError("Clip boundaries do not cover the complete Shot")
+            raise AssertionError("Every Shot must produce at least one Clip")
+        if clips[-1].end_ms != shot.end_ms:
+            raise AssertionError("The final Clip must reach the end of the Shot")
 
-        previous_end = shot.start_ms
-        previous_end_frame = shot.start_frame_idx
+        if clips[0].start_ms != shot.start_ms:
+            raise AssertionError("The first Clip must start with its parent Shot")
+
+        previous_start = shot.start_ms - 1
+        previous_end: Optional[int] = None
         for clip in clips:
-            if clip.start_ms != previous_end:
-                raise AssertionError("Clip boundaries contain a gap or overlap")
+            if clip.start_ms < shot.start_ms or clip.end_ms > shot.end_ms:
+                raise AssertionError("A Clip is outside its parent Shot")
+            if clip.start_ms <= previous_start:
+                raise AssertionError("Clip windows are not strictly ordered")
+            if previous_end is not None and clip.start_ms > previous_end:
+                raise AssertionError("Clip windows contain an uncovered gap")
             if clip.duration_ms <= 0:
                 raise AssertionError("Every Clip must have a positive duration")
             if clip.duration_ms > self.config.max_clip_duration_ms:
                 raise AssertionError("A Clip exceeds max_clip_duration_ms")
-            if clip.start_frame_idx != previous_end_frame:
-                raise AssertionError("Clip frame boundaries contain a gap or overlap")
             if clip.end_frame_idx <= clip.start_frame_idx:
                 raise AssertionError("Every Clip must contain at least one frame")
+            previous_start = clip.start_ms
             previous_end = clip.end_ms
-            previous_end_frame = clip.end_frame_idx
 
-        if previous_end_frame != shot.end_frame_idx:
-            raise AssertionError("Clip frames do not cover the complete Shot")
+
+def plan_clip_windows(
+    start_ms: int,
+    end_ms: int,
+    *,
+    split_threshold_ms: int = 10_000,
+    window_ms: int = 10_000,
+    stride_ms: int = 8_000,
+    min_new_window_gap_ms: int = 2_000,
+) -> List[tuple[int, int, str]]:
+    """Plan logical Clip intervals without decoding or materializing video.
+
+    Short Shots produce one ``full_shot`` interval. Longer Shots use overlapping
+    fixed windows and align the final window to the Shot end. If the tail would
+    add an almost duplicate window, the preceding window is tail-aligned.
+    """
+
+    if start_ms < 0 or end_ms <= start_ms:
+        raise ValueError("A Clip window range must satisfy 0 <= start_ms < end_ms")
+    if split_threshold_ms <= 0 or window_ms <= 0:
+        raise ValueError("split_threshold_ms and window_ms must be greater than 0")
+    if split_threshold_ms > window_ms:
+        raise ValueError("split_threshold_ms must be less than or equal to window_ms")
+    if stride_ms <= 0 or stride_ms > window_ms:
+        raise ValueError("stride_ms must satisfy 0 < stride_ms <= window_ms")
+    if min_new_window_gap_ms <= 0 or min_new_window_gap_ms > stride_ms:
+        raise ValueError(
+            "min_new_window_gap_ms must satisfy "
+            "0 < min_new_window_gap_ms <= stride_ms"
+        )
+
+    if end_ms - start_ms <= split_threshold_ms:
+        return [(start_ms, end_ms, "full_shot")]
+
+    intervals: List[tuple[int, int, str]] = []
+    current_start = start_ms
+    while current_start + window_ms < end_ms:
+        intervals.append(
+            (current_start, current_start + window_ms, "fixed_window")
+        )
+        current_start += stride_ms
+
+    tail_start = end_ms - window_ms
+    if (
+        len(intervals) <= 1
+        or tail_start - intervals[-1][0] >= min_new_window_gap_ms
+    ):
+        intervals.append((tail_start, end_ms, "fixed_window"))
+    else:
+        intervals[-1] = (tail_start, end_ms, "fixed_window")
+
+    return intervals

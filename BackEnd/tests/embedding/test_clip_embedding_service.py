@@ -6,10 +6,17 @@ from pathlib import Path
 
 import numpy as np
 
-from BackEnd.app.contracts.embedding import ClipRecord, DecodedFrameBatch, VideoAsset
+from BackEnd.app.contracts.embedding import (
+    ClipRecord,
+    DecodedFrameBatch,
+    EmbeddingRecord,
+    VideoAsset,
+)
+from BackEnd.app.contracts.pipeline import ShotMetadata
 from BackEnd.app.embedding.CONFIG import ArtifactWriterConfig
 from BackEnd.app.embedding.artifacts.reader import load_success_records
 from BackEnd.app.embedding.artifacts.validator import validate_embedding_artifact
+from BackEnd.app.embedding.clip.builder import build_clips
 from BackEnd.app.embedding.clip.service import ClipEmbeddingService
 
 
@@ -65,6 +72,37 @@ def make_clip(clip_id: str, start_ms: int, end_ms: int) -> ClipRecord:
 
 
 class ClipEmbeddingServiceTests(unittest.TestCase):
+    def test_builder_contract_runs_directly_in_embedding_service(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video_path = Path(temp_dir) / "L21_V001.mp4"
+            video_path.write_bytes(b"fake")
+            shots = [
+                ShotMetadata(
+                    shot_id="shot-1",
+                    video_id="L21_V001",
+                    shot_index=0,
+                    start_ms=0,
+                    end_ms=25_000,
+                )
+            ]
+
+            clips = build_clips(shots)
+            service = ClipEmbeddingService(
+                decoder=FakeDecoder(),
+                model_adapter=FakeAdapter(),
+                run_id="pipeline-contract-run",
+            )
+            vectors, records = service.embed_clips_to_matrix(
+                clips,
+                {"L21_V001": VideoAsset("L21_V001", video_path)},
+            )
+
+            self.assertTrue(all(isinstance(clip, ClipRecord) for clip in clips))
+            self.assertTrue(
+                all(isinstance(record, EmbeddingRecord) for record in records)
+            )
+            self.assertEqual(vectors.shape, (len(clips), 2))
+
     def test_service_decodes_unique_frames_and_writes_clip_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             decoder = FakeDecoder()
