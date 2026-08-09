@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from BackEnd.app.embedding.models.clip_vit_b32 import ClipViTB32Adapter
+from BackEnd.app.embedding.model_adapters.clip_vit_b32 import ClipViTB32Adapter
 
 
 class FakeModel:

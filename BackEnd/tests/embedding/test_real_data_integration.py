@@ -29,7 +29,7 @@ from BackEnd.app.embedding.clip.service import ClipEmbeddingService
 from BackEnd.app.embedding.clip.video_repository import VideoRepository
 from BackEnd.app.embedding.evaluation.exact_retrieval import exact_top_k
 from BackEnd.app.embedding.evaluation.text_encoder import encode_clip_queries
-from BackEnd.app.embedding.models.clip_vit_b32 import ClipViTB32Adapter
+from BackEnd.app.embedding.model_adapters.clip_vit_b32 import ClipViTB32Adapter
 from BackEnd.app.embedding.shot.service import ShotEmbeddingService
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
