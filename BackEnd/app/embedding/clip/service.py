@@ -9,7 +9,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from BackEnd.app.contracts.embedding import ClipRecord, EmbeddingRecord, VideoAsset
+from BackEnd.app.contracts.embedding import (
+    ClipRecord,
+    EmbeddingArtifactManifest,
+    EmbeddingRecord,
+    VideoAsset,
+)
 from BackEnd.app.embedding import CONFIG
 from BackEnd.app.embedding.artifacts.writer import EmbeddingArtifactWriter
 from BackEnd.app.embedding.clip.aggregator import aggregate_clip_frames
@@ -47,7 +52,7 @@ class ClipEmbeddingService:
         self,
         clips: list[ClipRecord],
         video_assets: dict[str, VideoAsset],
-    ):
+    ) -> EmbeddingArtifactManifest:
         """Embed clips using unique timestamp decode/encode per video."""
 
         vectors: list[np.ndarray] = []

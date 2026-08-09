@@ -20,7 +20,7 @@ class ClipExtractorMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
         self.extractor = ClipExtractor()
 
-    def test_short_shot_is_not_split(self) -> None:
+    def test_short_shot_creates_one_full_shot_clip(self) -> None:
         clips = self.extractor.run(
             {
                 "shot_id": "L21_V001_S0001",
@@ -31,9 +31,10 @@ class ClipExtractorMetadataTests(unittest.TestCase):
                 "end_frame_idx": 360,
             }
         )
-        self.assertEqual(clips, [])
+        self.assertEqual(len(clips), 1)
+        self.assertEqual((clips[0]["start_ms"], clips[0]["end_ms"]), (2_000, 12_000))
 
-    def test_long_shot_is_balanced_and_completely_covered(self) -> None:
+    def test_long_shot_uses_overlapping_fixed_windows(self) -> None:
         clips = self.extractor.run(
             {
                 "shot_id": "L21_V001_S0003",
@@ -50,8 +51,8 @@ class ClipExtractorMetadataTests(unittest.TestCase):
         self.assertEqual(clips[0]["start_ms"], 80_000)
         self.assertEqual(clips[-1]["end_ms"], 105_000)
         self.assertEqual(
-            [clip["end_ms"] - clip["start_ms"] for clip in clips],
-            [8_334, 8_333, 8_333],
+            [(clip["start_ms"], clip["end_ms"]) for clip in clips],
+            [(80_000, 90_000), (88_000, 98_000), (95_000, 105_000)],
         )
         self.assertTrue(
             all(clip["end_ms"] - clip["start_ms"] <= 10_000 for clip in clips)
@@ -62,14 +63,14 @@ class ClipExtractorMetadataTests(unittest.TestCase):
                 (clip["start_frame_idx"], clip["end_frame_idx"])
                 for clip in clips
             ],
-            [(2_400, 2_650), (2_650, 2_900), (2_900, 3_150)],
+            [(2_400, 2_700), (2_640, 2_940), (2_850, 3_150)],
         )
         self.assertTrue(all(clip["sampling_fps"] == 30.0 for clip in clips))
         self.assertTrue(all(len(clip["clip_id"]) <= 15 for clip in clips))
 
         for left, right in zip(clips, clips[1:]):
-            self.assertEqual(left["end_ms"], right["start_ms"])
-            self.assertEqual(left["end_frame_idx"], right["start_frame_idx"])
+            self.assertLess(right["start_ms"], left["end_ms"])
+            self.assertLess(right["start_frame_idx"], left["end_frame_idx"])
 
     def test_shot_slightly_over_threshold_does_not_create_tiny_tail(self) -> None:
         clips = self.extractor.run(
@@ -82,9 +83,10 @@ class ClipExtractorMetadataTests(unittest.TestCase):
                 "end_frame_idx": 300,
             }
         )
+        self.assertEqual(len(clips), 2)
         self.assertEqual(
-            [clip["end_ms"] - clip["start_ms"] for clip in clips],
-            [5_001, 5_000],
+            [(clip["start_ms"], clip["end_ms"]) for clip in clips],
+            [(0, 10_000), (1, 10_001)],
         )
 
     def test_run_returns_list_of_metadata_objects(self) -> None:
@@ -245,8 +247,8 @@ class ClipExtractorFFmpegTests(unittest.TestCase):
             self.assertEqual(clips[-1]["end_frame_idx"], test_end_frame_idx)
 
             for left, right in zip(clips, clips[1:]):
-                self.assertEqual(left["end_ms"], right["start_ms"])
-                self.assertEqual(left["end_frame_idx"], right["start_frame_idx"])
+                self.assertLessEqual(right["start_ms"], left["end_ms"])
+                self.assertLessEqual(right["start_frame_idx"], left["end_frame_idx"])
 
             for clip in clips:
                 duration_ms = clip["end_ms"] - clip["start_ms"]
