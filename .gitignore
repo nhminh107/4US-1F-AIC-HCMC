@@ -249,3 +249,5 @@ tasks
 # numpy array trong RAM, truyen thang trong cung 1 process - xem muc 3 module_ocr.md),
 # nen khong con file/thu muc debug nao khac trong output/ can ignore.
 # =========================================================
+
+/test_result/

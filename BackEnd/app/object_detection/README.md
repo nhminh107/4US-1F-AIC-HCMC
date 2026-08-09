@@ -2,6 +2,41 @@
 
 Module nay phu trach phat hien object tren keyframe, chuan hoa ket qua detection, va export sang JSON hoac contract `ObjectDetectionResult` de cac module phia sau nhu tracking/database dung tiep.
 
+## Open Images pipeline API
+
+Entrypoint theo shared DataContract:
+
+```python
+from BackEnd.app.object_detection import (
+    TFHubOpenImagesDetector,
+    detect_frame,
+    detect_frames,
+)
+
+detector = TFHubOpenImagesDetector(
+    batch_size=8,
+    device="/GPU:0",
+)
+
+one_frame_results = detect_frame(frame, detector=detector)
+batch_results = detect_frames(frames, detector=detector)
+```
+
+Khoi tao detector mot lan va truyen lai cho cac lan goi de tai model dung mot
+lan. `detect_frames()` gom cac anh cung shape va dung model batch khi signature
+TFHub ho tro; neu signature khoa batch size bang 1, module fallback an toan sang
+inference tung anh trong khi van tai/validate input theo batch.
+
+De pin model local cho offline reproducibility:
+
+```python
+detector = TFHubOpenImagesDetector(
+    model_url="data/models/openimages_v4",
+    expected_model_sha256="YOUR_VERIFIED_SHA256",
+    require_local_model=True,
+)
+```
+
 ## Vi tri detection chinh
 
 Detection chinh nam o:

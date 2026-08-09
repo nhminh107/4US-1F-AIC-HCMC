@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, replace
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -47,13 +48,20 @@ def _detect_image(
 ) -> list[ObjectDetectionResult]:
     """Run detection for one image and return only in-memory pipeline contracts."""
     image = load_image(str(image_path))
-    active_detector = detector or TFHubOpenImagesDetector()
+    active_detector = detector or _default_detector()
     return detect_image_array(
         image,
         frame_id=frame_id,
         detector=active_detector,
         img_path=str(image_path),
     )
+
+
+@lru_cache(maxsize=1)
+def _default_detector() -> TFHubOpenImagesDetector:
+    """Load and retain the default Open Images model once per process."""
+
+    return TFHubOpenImagesDetector()
 
 
 def detect_frame(
@@ -69,6 +77,67 @@ def detect_frame(
         frame_id=frame.frame_id,
         detector=detector,
     )
+
+
+def detect_frames(
+    frames: list[FrameMetadata],
+    *,
+    detector: Detector | None = None,
+    batch_size: int | None = None,
+) -> list[ObjectDetectionResult]:
+    """Detect a frame batch while loading each image and model only once."""
+
+    if not frames:
+        return []
+    active_detector = detector or _default_detector()
+    resolved_batch_size = batch_size or getattr(active_detector, "batch_size", 1)
+    if resolved_batch_size <= 0:
+        raise ValueError("batch_size must be greater than 0.")
+
+    contracts: list[ObjectDetectionResult] = []
+    for start in range(0, len(frames), resolved_batch_size):
+        frame_batch = frames[start : start + resolved_batch_size]
+        images: list[np.ndarray] = []
+        for frame in frame_batch:
+            if frame.frame_path is None:
+                raise ValueError(
+                    f"FrameMetadata.frame_path is required for {frame.frame_id}."
+                )
+            images.append(load_image(str(frame.frame_path)))
+
+        shape_groups: dict[tuple[int, ...], list[int]] = {}
+        for index, image in enumerate(images):
+            shape_groups.setdefault(image.shape, []).append(index)
+
+        contracts_by_index: dict[int, list[ObjectDetectionResult]] = {}
+        for indices in shape_groups.values():
+            grouped_images = [images[index] for index in indices]
+            grouped_frames = [frame_batch[index] for index in indices]
+            detection_batches = active_detector.detect_batch(
+                grouped_images,
+                frame_ids=[frame.frame_id for frame in grouped_frames],
+                img_paths=[str(frame.frame_path) for frame in grouped_frames],
+            )
+            for batch_index, frame, image, detections in zip(
+                indices,
+                grouped_frames,
+                grouped_images,
+                detection_batches,
+            ):
+                clipped = clip_detections(
+                    detections,
+                    image_width=image.shape[1],
+                    image_height=image.shape[0],
+                )
+                contracts_by_index[batch_index] = detections_to_contracts(
+                    clipped,
+                    image_width=image.shape[1],
+                    image_height=image.shape[0],
+                    frame_id=frame.frame_id,
+                )
+        for index in range(len(frame_batch)):
+            contracts.extend(contracts_by_index[index])
+    return contracts
 
 
 def detect_image_to_jsonl(
