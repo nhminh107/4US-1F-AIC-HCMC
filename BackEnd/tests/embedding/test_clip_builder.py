@@ -25,8 +25,11 @@ class ClipBuilderTests(unittest.TestCase):
     def test_slightly_long_shot_aligns_tail_without_duplicate(self) -> None:
         clips = build_clips([ShotMetadata("shot-1", "L21_V001", 0, 0, 10_001)])
 
-        self.assertEqual(len(clips), 1)
-        self.assertEqual((clips[0].start_ms, clips[0].end_ms), (1, 10_001))
+        self.assertEqual(len(clips), 2)
+        self.assertEqual(
+            [(clip.start_ms, clip.end_ms) for clip in clips],
+            [(0, 10_000), (1, 10_001)],
+        )
 
     def test_twenty_five_second_shot_covers_tail(self) -> None:
         clips = build_clips([ShotMetadata("shot-1", "L21_V001", 0, 0, 25_000)])
@@ -49,4 +52,3 @@ class ClipBuilderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

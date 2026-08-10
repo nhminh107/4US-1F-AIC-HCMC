@@ -166,6 +166,7 @@ class PostgreGetIntegrationTests(unittest.TestCase):
             )
 
         frame = self.manager.get_frame_record_by_frame_id(first_frame_id)
+        video_frames = self.manager.get_frame_record_by_video_id(video_id)
         frames = self.manager.get_list_frame_in_shot(first_shot_id)
         shots = self.manager.get_list_shot_in_video(video_id)
         clips = self.manager.get_list_clip_in_shot(first_shot_id)
@@ -173,6 +174,14 @@ class PostgreGetIntegrationTests(unittest.TestCase):
         self.assertIsInstance(frame, FrameMetadata)
         self.assertEqual(frame.frame_id, first_frame_id)
         self.assertEqual(frame.frame_path, Path(f"tests/{first_frame_id}.jpg"))
+
+        self.assertEqual(
+            [item.frame_id for item in video_frames],
+            [first_frame_id, second_frame_id, other_frame_id],
+        )
+        self.assertTrue(
+            all(isinstance(item, FrameMetadata) for item in video_frames)
+        )
 
         self.assertEqual(
             [item.frame_id for item in frames],

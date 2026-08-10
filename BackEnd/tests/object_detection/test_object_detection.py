@@ -1,7 +1,7 @@
 """Unit tests for the object detection module.
 
 Run from project root:
-    python3 -m BackEnd.app.object_detection.test
+    python3 -m unittest BackEnd.tests.object_detection.test_object_detection
 
 This file intentionally avoids real OpenCV/YOLO inference. It guards the stable
 contracts that can silently corrupt downstream DB/tracking data when changed:

@@ -11,24 +11,25 @@ Module này nhận **1 record Shot** và chia Shot dài thành nhiều record Cl
 
 ## Hành vi chuẩn
 
-- Shot dài **không quá 10 giây**: không cần chia, trả về `[]`. Module Embedding có
-  thể xử lý trực tiếp Shot này như tài liệu pipeline đã lưu ý.
-- Shot dài **hơn 10 giây**: chia thành ít nhất 2 Clip liên tục, mỗi Clip không quá
-  10 giây.
+- Shot dài **không quá 10 giây**: tạo đúng một Clip loại `full_shot` bao phủ toàn
+  bộ Shot.
+- Shot dài **hơn 10 giây**: tạo các cửa sổ 10 giây, mặc định stride 8 giây nên
+  hai cửa sổ lân cận có phần ngữ cảnh chồng nhau.
 - Mốc `start_ms`/`end_ms` của Clip là mốc tuyệt đối trên video gốc.
-- Mốc `start_frame_idx`/`end_frame_idx` được nội suy từ đúng record Shot và các
-  Clip liên tiếp dùng chung một biên frame, nên không bị hở hoặc chồng.
+- Mốc `start_frame_idx`/`end_frame_idx` được nội suy từ đúng record Shot.
 - Mặc định chỉ tạo metadata, **không lưu thêm file video**, để tránh dư dữ liệu.
 - Khi thật sự cần file MP4 cho demo/model ngoài, bật `materialize_files=True`;
   FFmpeg sẽ cắt chính xác từng Clip.
 
-Ví dụ Shot `80000-105000 ms` (25 giây) được chia cân bằng thành 3 Clip:
+Ví dụ Shot `80000-105000 ms` (25 giây) tạo thành 3 cửa sổ:
 
 ```text
-80000-88334, 88334-96667, 96667-105000
+80000-90000, 88000-98000, 95000-105000
 ```
 
-Cách chia cân bằng tránh sinh một Clip cuối chỉ dài vài mili-giây.
+Cửa sổ cuối được căn theo cuối Shot. Module chỉ gộp một cửa sổ cuối gần-trùng
+khi các cửa sổ trước đó vẫn bảo đảm toàn bộ Shot được phủ, nên không làm mất dữ
+liệu ở đầu hoặc cuối Shot.
 
 ## Input
 
