@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+from uuid import uuid4
 
 import faiss
 import numpy as np
@@ -23,47 +25,42 @@ class FAISS_Manager:
         version=0,
         model_name="clip-ViT-B-32",
         model_version="0",
+        data_path: str | Path | None = None,
+        load_existing: bool = True,
     ):
-        self.frame = faiss.IndexFlatIP(img_dim)
-        self.clip = faiss.IndexFlatIP(clip_dim)
-        self.shot = faiss.IndexFlatIP(shot_dim)
-
-        self.frame_idx = faiss.IndexIDMap2(self.frame)
-        self.clip_idx = faiss.IndexIDMap2(self.clip)
-        self.shot_idx = faiss.IndexIDMap2(self.shot)
-
-        self.datapath = Path(__file__).resolve().parent
+        self.datapath = Path(data_path or Path(__file__).resolve().parent)
+        self.datapath.mkdir(parents=True, exist_ok=True)
         self.version = version
         self.model_name = model_name
         self.model_version = model_version
+        self.frame_idx = self._load_or_create_index(
+            "frame.faiss", img_dim, load_existing
+        )
+        self.clip_idx = self._load_or_create_index(
+            "clip.faiss", clip_dim, load_existing
+        )
+        self.shot_idx = self._load_or_create_index(
+            "shot.faiss", shot_dim, load_existing
+        )
 
-    def __get_idx_field(self, index_type: int):
-        """Type: {0: image_idx, 1: clip_idx, 2: shot_idx}"""
-        if index_type == 0:
-            return "image_idx"
-        if index_type == 1:
-            return "clip_idx"
-        if index_type == 2:
-            return "shot_idx"
-        raise ValueError("Index type does not exist")
+    def _load_or_create_index(
+        self,
+        filename: str,
+        expected_dim: int,
+        load_existing: bool,
+    ):
+        path = self.datapath / filename
+        if load_existing and path.is_file():
+            index = faiss.read_index(str(path))
+            if index.d != expected_dim:
+                raise ValueError(
+                    f"Existing {filename} dimension is {index.d}, expected {expected_dim}."
+                )
+            if not isinstance(index, faiss.IndexIDMap2):
+                raise ValueError(f"Existing {filename} must be a FAISS IndexIDMap2.")
+            return index
 
-    def __get_idx_json(self, index_type: int):
-        json_path = self.datapath / "faiss_index.json"
-        with open(json_path, "r", encoding="utf-8") as file:
-            data = json.load(file)
-
-        return data[self.__get_idx_field(index_type)]
-
-    def __buff_idx_json(self, index_type: int, n=1):
-        """Use after add_with_ids."""
-        json_path = self.datapath / "faiss_index.json"
-        with open(json_path, "r", encoding="utf-8") as file:
-            data = json.load(file)
-
-        field = self.__get_idx_field(index_type)
-        data[field] += n
-        with open(json_path, "w", encoding="utf-8") as file:
-            json.dump(data, file, indent=4)
+        return faiss.IndexIDMap2(faiss.IndexFlatIP(expected_dim))
 
     def __prepare_embeddings(self, embeddings, expected_dim):
         embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
@@ -73,8 +70,13 @@ class FAISS_Manager:
             )
         return embeddings
 
-    def __get_ids(self, index_type, n):
-        first_idx = self.__get_idx_json(index_type) + 1
+    @staticmethod
+    def _index_ids(index) -> np.ndarray:
+        return faiss.vector_to_array(index.id_map).astype(np.int64, copy=False)
+
+    def __get_ids(self, index, n):
+        current_ids = self._index_ids(index)
+        first_idx = int(current_ids.max()) + 1 if current_ids.size else 1
         return np.arange(first_idx, first_idx + n, dtype=np.int64)
 
     def add_imgs(self, imgs: list[np.ndarray], imgs_model: list[FrameMetadata]):
@@ -82,10 +84,9 @@ class FAISS_Manager:
             raise ValueError("imgs and imgs_model must have the same length")
 
         imgs = self.__prepare_embeddings(imgs, self.frame_idx.d)
-        ids = self.__get_ids(0, len(imgs))
+        ids = self.__get_ids(self.frame_idx, len(imgs))
 
         self.frame_idx.add_with_ids(imgs, ids)
-        self.__buff_idx_json(0, len(imgs))
 
         frame_embedding_records = []
         for count, faiss_id in enumerate(ids):
@@ -103,10 +104,9 @@ class FAISS_Manager:
             raise ValueError("clips and clips_model must have the same length")
 
         clips = self.__prepare_embeddings(clips, self.clip_idx.d)
-        ids = self.__get_ids(1, len(clips))
+        ids = self.__get_ids(self.clip_idx, len(clips))
 
         self.clip_idx.add_with_ids(clips, ids)
-        self.__buff_idx_json(1, len(clips))
 
         clip_embedding_records = []
         for count, faiss_id in enumerate(ids):
@@ -124,10 +124,9 @@ class FAISS_Manager:
             raise ValueError("shots and shots_model must have the same length")
 
         shots = self.__prepare_embeddings(shots, self.shot_idx.d)
-        ids = self.__get_ids(2, len(shots))
+        ids = self.__get_ids(self.shot_idx, len(shots))
 
         self.shot_idx.add_with_ids(shots, ids)
-        self.__buff_idx_json(2, len(shots))
 
         shot_embedding_records = []
         for count, faiss_id in enumerate(ids):
@@ -141,10 +140,99 @@ class FAISS_Manager:
             shot_embedding_records.append(record)
         return shot_embedding_records
 
-    def save(self):
-        faiss.write_index(self.frame_idx, str(self.datapath / "frame.faiss"))
-        faiss.write_index(self.clip_idx, str(self.datapath / "clip.faiss"))
-        faiss.write_index(self.shot_idx, str(self.datapath / "shot.faiss"))
+    def save(self, index_types: set[str] | None = None):
+        """Atomically persist selected indexes and synchronize ID counters."""
+
+        selected = index_types or {"frame", "clip", "shot"}
+        indexes = {
+            "frame": (self.frame_idx, self.datapath / "frame.faiss"),
+            "clip": (self.clip_idx, self.datapath / "clip.faiss"),
+            "shot": (self.shot_idx, self.datapath / "shot.faiss"),
+        }
+        unknown = selected - set(indexes)
+        if unknown:
+            raise ValueError(f"Unknown FAISS index types: {sorted(unknown)}")
+
+        for index_type in selected:
+            index, path = indexes[index_type]
+            temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+            try:
+                faiss.write_index(index, str(temporary_path))
+                os.replace(temporary_path, path)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+
+        self._save_id_counters()
+
+    def _save_id_counters(self) -> None:
+        counter_path = self.datapath / "faiss_index.json"
+        temporary_path = counter_path.with_name(
+            f".{counter_path.name}.{uuid4().hex}.tmp"
+        )
+        counters = {
+            "image_idx": self._max_id(self.frame_idx),
+            "clip_idx": self._max_id(self.clip_idx),
+            "shot_idx": self._max_id(self.shot_idx),
+        }
+        try:
+            with temporary_path.open("w", encoding="utf-8") as file:
+                json.dump(counters, file, indent=4)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary_path, counter_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+    @classmethod
+    def _max_id(cls, index) -> int:
+        ids = cls._index_ids(index)
+        return int(ids.max()) if ids.size else 0
+
+    def validate_ids(self, index_type: str, faiss_ids: list[int]) -> None:
+        """Ensure persisted PostgreSQL mappings still exist in the FAISS index."""
+
+        indexes = {
+            "frame": self.frame_idx,
+            "clip": self.clip_idx,
+            "shot": self.shot_idx,
+        }
+        if index_type not in indexes:
+            raise ValueError(f"Unknown FAISS index type: {index_type}")
+        available_ids = set(self._index_ids(indexes[index_type]).tolist())
+        missing_ids = sorted(set(faiss_ids) - available_ids)
+        if missing_ids:
+            raise RuntimeError(
+                f"PostgreSQL references missing {index_type} FAISS IDs: "
+                f"{missing_ids[:10]}."
+            )
+
+    @staticmethod
+    def _remove_mappings(index, mappings) -> None:
+        ids = np.asarray([mapping.faiss_id for mapping in mappings], dtype=np.int64)
+        if ids.size:
+            index.remove_ids(ids)
+
+    def rollback(
+        self,
+        *,
+        frame_mappings=None,
+        clip_mappings=None,
+        shot_mappings=None,
+    ) -> None:
+        """Remove newly-added mappings and persist the compensated indexes."""
+
+        selected: set[str] = set()
+        if frame_mappings:
+            self._remove_mappings(self.frame_idx, frame_mappings)
+            selected.add("frame")
+        if clip_mappings:
+            self._remove_mappings(self.clip_idx, clip_mappings)
+            selected.add("clip")
+        if shot_mappings:
+            self._remove_mappings(self.shot_idx, shot_mappings)
+            selected.add("shot")
+        if selected:
+            self.save(selected)
 
     def add_and_save(
         self,
@@ -158,15 +246,33 @@ class FAISS_Manager:
         frame_records = []
         clip_records = []
         shot_records = []
+        selected: set[str] = set()
 
         if imgs is not None and imgs_model is not None:
             frame_records = self.add_imgs(imgs, imgs_model)
+            selected.add("frame")
         if clips is not None and clips_model is not None:
             clip_records = self.add_clips(clips, clips_model)
+            selected.add("clip")
         if shots is not None and shots_model is not None:
             shot_records = self.add_shots(shots, shots_model)
+            selected.add("shot")
 
-        self.save()
+        try:
+            if selected:
+                self.save(selected)
+        except Exception:
+            self._remove_mappings(self.frame_idx, frame_records)
+            self._remove_mappings(self.clip_idx, clip_records)
+            self._remove_mappings(self.shot_idx, shot_records)
+            try:
+                if selected:
+                    self.save(selected)
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "FAISS save failed and the compensated index could not be persisted."
+                ) from rollback_error
+            raise
         return frame_records, clip_records, shot_records
 
 

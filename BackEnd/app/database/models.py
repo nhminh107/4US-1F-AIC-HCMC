@@ -96,7 +96,7 @@ class Shot(Base):
 
 
 class Frame(Base):
-    """A persisted keyframe or a metadata-only tracking sample."""
+    """A persisted official or extracted keyframe."""
 
     __tablename__ = "frame"
     __table_args__ = (

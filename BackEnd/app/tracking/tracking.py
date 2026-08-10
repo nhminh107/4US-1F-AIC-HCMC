@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from importlib.metadata import version
+import logging
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -13,6 +14,7 @@ import supervision as sv
 from trackers import ByteTrackTracker
 
 from BackEnd.app.contracts.pipeline import (
+    FrameMetadata,
     ObjectDetectionResult,
     ObjectTrackResult,
     ShotMetadata,
@@ -21,8 +23,11 @@ from BackEnd.app.contracts.pipeline import (
 )
 from BackEnd.app.object_detection.detector import Detector
 from BackEnd.app.object_detection.openimages_jsonl import detect_image_array
+from BackEnd.app.object_detection.preprocess import load_image
 from BackEnd.app.object_detection.tfhub_openimages_detector import TFHubOpenImagesDetector
-from BackEnd.CONFIG import TrackingConfig
+from BackEnd.CONFIG import PROJECT_ROOT, TrackingConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +98,7 @@ class ByteTrackService:
         self,
         video: VideoMetadata,
         shots: Iterable[ShotMetadata],
+        frames: Iterable[FrameMetadata] = (),
     ) -> TrackingBatchResult:
         video_path = Path(video.video_path)
         if not video_path.is_file():
@@ -103,6 +109,11 @@ class ByteTrackService:
         if not ordered_shots:
             return TrackingBatchResult([], [], [])
 
+        persisted_events = _load_persisted_frame_events(video.video_id, frames)
+        persisted_positions = {
+            (timestamp_ms, frame_idx)
+            for timestamp_ms, frame_idx, _, _ in persisted_events
+        }
         detections: list[ObjectDetectionResult] = []
         observations: list[TrackObservationResult] = []
         accumulators: dict[int, _TrackAccumulator] = {}
@@ -114,7 +125,9 @@ class ByteTrackService:
         next_sample_ms = ordered_shots[0].start_ms
         sample_interval_ms = 1_000 / self.config.sampling_fps
 
-        for timestamp_ms, frame_idx, image in _iter_video_frames(video_path):
+        def advance_to_shot(timestamp_ms: int) -> ShotMetadata | None:
+            nonlocal shot_index, active_shot_id, class_trackers, next_sample_ms
+
             while (
                 shot_index < len(ordered_shots)
                 and timestamp_ms >= ordered_shots[shot_index].end_ms
@@ -126,20 +139,30 @@ class ByteTrackService:
                     next_sample_ms = ordered_shots[shot_index].start_ms
 
             if shot_index >= len(ordered_shots):
-                break
+                return None
 
             shot = ordered_shots[shot_index]
-            if timestamp_ms < shot.start_ms or timestamp_ms < next_sample_ms:
-                continue
+            if timestamp_ms < shot.start_ms:
+                return None
 
             if active_shot_id != shot.shot_id:
                 active_shot_id = shot.shot_id
                 class_trackers = {}
+            return shot
 
-            while next_sample_ms <= timestamp_ms:
-                next_sample_ms += sample_interval_ms
+        def process_frame(
+            timestamp_ms: int,
+            frame_idx: int,
+            image: np.ndarray,
+            frame_id: str,
+        ) -> None:
+            nonlocal next_track_id
 
-            frame_id = f"{video.video_id}_tracking_{frame_idx:08d}"
+            shot = advance_to_shot(timestamp_ms)
+            if shot is None:
+                return
+
+            height, width = image.shape[:2]
             frame_detections = detect_image_array(
                 image,
                 frame_id=frame_id,
@@ -156,7 +179,6 @@ class ByteTrackService:
             for local_index, detection in enumerate(frame_detections):
                 grouped_indices.setdefault(detection.class_id, []).append(local_index)
 
-            height, width = image.shape[:2]
             for class_id, local_indices in grouped_indices.items():
                 tracker = class_trackers.get(class_id)
                 if tracker is None:
@@ -205,8 +227,44 @@ class ByteTrackService:
                         )
                     )
 
+        persisted_index = 0
+        for timestamp_ms, frame_idx, image in _iter_video_frames(video_path):
+            while (
+                persisted_index < len(persisted_events)
+                and persisted_events[persisted_index][0] <= timestamp_ms
+            ):
+                persisted_timestamp_ms, persisted_frame_idx, persisted_image, persisted_frame_id = (
+                    persisted_events[persisted_index]
+                )
+                process_frame(
+                    persisted_timestamp_ms,
+                    persisted_frame_idx,
+                    persisted_image,
+                    persisted_frame_id,
+                )
+                persisted_index += 1
+
+            if advance_to_shot(timestamp_ms) is None or timestamp_ms < next_sample_ms:
+                continue
+            while next_sample_ms <= timestamp_ms:
+                next_sample_ms += sample_interval_ms
+            if (timestamp_ms, frame_idx) not in persisted_positions:
+                process_frame(
+                    timestamp_ms,
+                    frame_idx,
+                    image,
+                    _tracking_frame_id(video.video_id, frame_idx),
+                )
+
+        for timestamp_ms, frame_idx, image, frame_id in persisted_events[persisted_index:]:
+            process_frame(timestamp_ms, frame_idx, image, frame_id)
+
         tracks = [self._to_track_contract(item) for item in accumulators.values()]
-        return TrackingBatchResult(detections, tracks, observations)
+        return TrackingBatchResult(
+            detections,
+            tracks,
+            observations,
+        )
 
     @staticmethod
     def _validate_shots(video_id: str, shots: list[ShotMetadata]) -> None:
@@ -264,6 +322,37 @@ class ByteTrackService:
             tracker_version=self.tracker_version,
             track_id=item.track_id,
         )
+
+
+def _tracking_frame_id(video_id: str, frame_idx: int) -> str:
+    """Create a deterministic tracking-sample ID within ``frame_id varchar(15)``."""
+
+    frame_id = f"{video_id}T{frame_idx:06d}"
+    if len(frame_id) > 15:
+        raise ValueError(f"Tracking frame ID exceeds varchar(15): {frame_id}.")
+    return frame_id
+
+
+def _load_persisted_frame_events(
+    video_id: str,
+    frames: Iterable[FrameMetadata],
+) -> list[tuple[int, int, np.ndarray, str]]:
+    """Load available DB frames once for tracking, without creating new frames."""
+
+    events: list[tuple[int, int, np.ndarray, str]] = []
+    for frame in frames:
+        if frame.video_id != video_id or frame.frame_path is None:
+            continue
+        frame_path = Path(frame.frame_path)
+        if not frame_path.is_absolute():
+            frame_path = PROJECT_ROOT / frame_path
+        if not frame_path.is_file():
+            logger.warning("Skipping unavailable persisted frame %s: %s", frame.frame_id, frame_path)
+            continue
+        events.append(
+            (frame.timestamp_ms, frame.frame_idx, load_image(str(frame_path)), frame.frame_id)
+        )
+    return sorted(events, key=lambda item: (item[0], item[1], item[3]))
 
 
 # Backward-compatible name for existing imports.

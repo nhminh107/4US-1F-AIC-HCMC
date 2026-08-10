@@ -212,6 +212,9 @@ OPENIMAGES_MODEL_URL = (
 )
 OPENIMAGES_MODEL_NAME = "faster_rcnn/inception_resnet_v2"
 OPENIMAGES_MODEL_VERSION = "openimages_v4/1"
+OPENIMAGES_CLASS_MAP_PATH = (
+    BACKEND_ROOT / "app" / "object_detection" / "open_images_v4_classes.csv"
+)
 
 
 # Search indexing

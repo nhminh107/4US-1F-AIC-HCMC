@@ -44,7 +44,7 @@ class ShotMetadata:
 
 @dataclass(frozen=True, slots=True)
 class FrameMetadata:
-    """Metadata for a keyframe or tracking sample."""
+    """Metadata for a persisted official or extracted keyframe."""
 
     frame_id: str
     video_id: str

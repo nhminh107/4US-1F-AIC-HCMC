@@ -61,7 +61,7 @@ on Frame(video_id, n)
 where source = 'official';
 
 comment on column Frame.frame_path is
-	'NULL for tracking_sample frames when only frame metadata is persisted';
+	'Path to the persisted official or extracted keyframe image.';
 
 create table ClassID (
 	class_id varchar(15) primary key, 
