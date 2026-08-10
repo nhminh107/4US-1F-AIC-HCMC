@@ -8,7 +8,6 @@ import math
 from pathlib import Path
 from typing import Any, Literal
 
-FrameRole = Literal["keyframe", "tracking_sample"]
 FrameSource = Literal["official", "extracted"]
 
 
@@ -49,14 +48,13 @@ class FrameMetadata:
 
     frame_id: str
     video_id: str
-    shot_id: str
+    shot_id: str | None
     timestamp_ms: int
     fps: float
     frame_idx: int
-    frame_role: FrameRole | None = None
     source: FrameSource | None = None
     n: int | None = None
-    pts_time: int | None = None
+    pts_time: float | None = None
     frame_path: Path | None = None
     width: int | None = None
     height: int | None = None

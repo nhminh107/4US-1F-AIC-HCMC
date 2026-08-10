@@ -17,7 +17,6 @@ frame = FrameMetadata(
     timestamp_ms=0,
     fps=30.0,
     frame_idx=0,
-    frame_role="keyframe",
     source="official",
     n=1,
     frame_path=Path("data/keyframes/L21_V001/001.jpg"),

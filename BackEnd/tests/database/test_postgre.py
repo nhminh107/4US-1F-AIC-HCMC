@@ -119,7 +119,6 @@ class PostgreManagerIntegrationTests(unittest.TestCase):
             timestamp_ms=1_000,
             fps=30.0,
             frame_idx=30,
-            frame_role="keyframe",
             source="extracted",
             frame_path=f"tests/{self.frame_id}.jpg",
             width=1920,

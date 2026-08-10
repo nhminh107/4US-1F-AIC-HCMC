@@ -20,6 +20,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
     Integer,
     JSON,
     String,
@@ -104,12 +105,20 @@ class Frame(Base):
         CheckConstraint("timestamp_ms >= 0"),
         CheckConstraint("fps > 0"),
         CheckConstraint("frame_idx >= 0"),
-        CheckConstraint("frame_role IN ('keyframe', 'tracking_sample')"),
         CheckConstraint("source IN ('official', 'extracted')"),
+        CheckConstraint(
+            "source <> 'official' OR shot_id IS NULL",
+            name="frame_official_shot_null_check",
+        ),
         CheckConstraint("width > 0"),
         CheckConstraint("height > 0"),
-        CheckConstraint("frame_role <> 'tracking_sample' OR frame_path IS NULL"),
-        UniqueConstraint("video_id", "frame_idx"),
+        Index(
+            "uq_frame_official_video_n",
+            "video_id",
+            "n",
+            unique=True,
+            postgresql_where=text("source = 'official'"),
+        ),
         ForeignKeyConstraint(
             ["video_id", "shot_id"],
             ["shot.video_id", "shot.shot_id"],
@@ -119,18 +128,17 @@ class Frame(Base):
     frame_id: Mapped[str] = mapped_column(String(15), primary_key=True)
     n: Mapped[int | None] = mapped_column(Integer)
     video_id: Mapped[str] = mapped_column(String(15), nullable=False)
-    shot_id: Mapped[str] = mapped_column(String(15), nullable=False)
-    pts_time: Mapped[int | None] = mapped_column(BigInteger)
+    shot_id: Mapped[str | None] = mapped_column(String(15))
+    pts_time: Mapped[float | None] = mapped_column(Float)
     timestamp_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
     fps: Mapped[float] = mapped_column(Float, nullable=False)
     frame_idx: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    frame_role: Mapped[str] = mapped_column(String(20), nullable=False)
     source: Mapped[str] = mapped_column(String(20), nullable=False)
     frame_path: Mapped[str | None] = mapped_column(String(200))
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
 
-    shot: Mapped[Shot] = relationship(back_populates="frames")
+    shot: Mapped[Shot | None] = relationship(back_populates="frames")
     ocr_records: Mapped[list[OCR]] = relationship(back_populates="frame")
     object_detections: Mapped[list[ObjectDetection]] = relationship(
         back_populates="frame"

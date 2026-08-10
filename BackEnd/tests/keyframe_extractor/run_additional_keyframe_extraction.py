@@ -91,7 +91,6 @@ def _frame_to_dict(frame: FrameMetadata) -> dict[str, int | float | str | None]:
         "timestamp_ms": frame.timestamp_ms,
         "fps": frame.fps,
         "frame_idx": frame.frame_idx,
-        "frame_role": frame.frame_role,
         "source": frame.source,
         "n": frame.n,
         "pts_time": frame.pts_time,

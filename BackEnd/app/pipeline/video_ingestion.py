@@ -1,4 +1,5 @@
-"""Ingest organizer-provided video metadata into PostgreSQL."""
+"""NOTE:
+File này để lưu tất cả video của BTC vào Postgre"""
 
 from __future__ import annotations
 

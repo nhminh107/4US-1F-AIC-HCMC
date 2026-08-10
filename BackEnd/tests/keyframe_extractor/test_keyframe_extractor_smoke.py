@@ -55,7 +55,6 @@ class KeyframeExtractorSmokeTests(unittest.TestCase):
         for frame in frames:
             self.assertEqual(frame.video_id, _SAMPLE_VIDEO_ID)
             self.assertEqual(frame.source, "extracted")
-            self.assertEqual(frame.frame_role, "keyframe")
             self.assertIsNotNone(frame.frame_path)
             self.assertTrue(frame.frame_path.is_file(), f"Image file missing: {frame.frame_path}")
             self.assertGreater(frame.width, 0)

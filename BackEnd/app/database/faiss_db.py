@@ -185,7 +185,6 @@ if __name__ == "__main__":
             timestamp_ms=0,
             fps=30.0,
             frame_idx=0,
-            frame_role="keyframe",
             source="extracted",
         )
     ]

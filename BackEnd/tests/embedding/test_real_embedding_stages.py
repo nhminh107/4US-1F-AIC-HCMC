@@ -193,7 +193,6 @@ class RealEmbeddingStagesTests(unittest.TestCase):
             timestamp_ms=0,
             fps=30.0,
             frame_idx=0,
-            frame_role="keyframe",
             source="official",
             n=1,
             frame_path=KEYFRAME_DIR / "001.jpg",

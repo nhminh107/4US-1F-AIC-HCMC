@@ -68,7 +68,6 @@ class CaptionGeneratorAlwaysReturnsValidResultsTests(unittest.TestCase):
             timestamp_ms=0,
             fps=25.0,
             frame_idx=0,
-            frame_role="keyframe",
             source="official",
             frame_path=image_path,
         )

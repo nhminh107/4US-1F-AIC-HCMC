@@ -20,7 +20,6 @@ def _frame(frame_id: str, timestamp_ms: int) -> FrameMetadata:
         timestamp_ms=timestamp_ms,
         fps=25.0,
         frame_idx=timestamp_ms // 40,
-        frame_role="keyframe",
         source="official",
     )
 

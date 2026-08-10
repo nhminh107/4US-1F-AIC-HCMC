@@ -39,7 +39,6 @@ def _make_temp_frames(directory: Path, count: int, start_ms: int = 0, step_ms: i
                 timestamp_ms=timestamp_ms,
                 fps=25.0,
                 frame_idx=timestamp_ms // 40,
-                frame_role="keyframe",
                 source="official",
                 frame_path=image_path,
             )

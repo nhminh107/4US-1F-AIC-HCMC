@@ -41,7 +41,6 @@ def _make_temp_frame(directory: Path, frame_id: str = "L21_V001_E001") -> FrameM
         timestamp_ms=1000,
         fps=25.0,
         frame_idx=25,
-        frame_role="keyframe",
         source="official",
         frame_path=image_path,
     )
@@ -85,7 +84,6 @@ class CaptionFrameTests(unittest.TestCase):
             timestamp_ms=1000,
             fps=25.0,
             frame_idx=25,
-            frame_role="keyframe",
             source="official",
             frame_path=None,
         )
@@ -105,7 +103,6 @@ class CaptionFrameTests(unittest.TestCase):
             timestamp_ms=1000,
             fps=25.0,
             frame_idx=25,
-            frame_role="keyframe",
             source="official",
             frame_path=Path("this/path/does/not/exist.jpg"),
         )

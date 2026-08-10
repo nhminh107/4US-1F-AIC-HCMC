@@ -35,29 +35,30 @@ create table Frame (
 	frame_id varchar(15) primary key,
 	n int check (n >= 0), 
 	video_id varchar(15) not null,
-	shot_id varchar(15) not null, 
+	shot_id varchar(15),
 	
-	pts_time bigint check (pts_time >= 0), 
+	pts_time float check (pts_time >= 0),
 	timestamp_ms bigint not null check (timestamp_ms >= 0),
 	fps float not null check (fps > 0),
 	frame_idx bigint not null check (frame_idx >= 0), 
 	
-	frame_role varchar(20) not null check (
-		frame_role in ('keyframe', 'tracking_sample')
-	),
 	source varchar(20) not null check (
 		source in ('official', 'extracted')
+	),
+	constraint frame_official_shot_null_check check (
+		source <> 'official' or shot_id is null
 	),
 	frame_path varchar(200),
 	width int check (width > 0),
 	height int check (height > 0),
 
-	check (frame_role <> 'tracking_sample' or frame_path is null),
-	
-	unique (video_id, frame_idx),
 	
 	foreign key (video_id, shot_id) references Shot(video_id, shot_id)
 );
+
+create unique index uq_frame_official_video_n
+on Frame(video_id, n)
+where source = 'official';
 
 comment on column Frame.frame_path is
 	'NULL for tracking_sample frames when only frame metadata is persisted';

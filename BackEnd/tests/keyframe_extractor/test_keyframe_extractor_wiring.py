@@ -78,7 +78,6 @@ class KeyframeExtractorWiringTests(unittest.TestCase):
         for frame in frames:
             self.assertEqual(frame.video_id, "L21_V001")
             self.assertEqual(frame.shot_id, "L21_V001_S001")
-            self.assertEqual(frame.frame_role, "keyframe")
             self.assertEqual(frame.source, "extracted")
             self.assertEqual(frame.width, 1920)
             self.assertEqual(frame.height, 1080)

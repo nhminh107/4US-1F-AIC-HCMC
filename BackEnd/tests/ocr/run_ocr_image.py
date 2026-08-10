@@ -25,7 +25,6 @@ def main(img_path: Path) -> None:
         timestamp_ms=0,
         fps=1.0,
         frame_idx=0,
-        frame_role="keyframe",
         source="official",
         n=frame_number,
         frame_path=img_path,

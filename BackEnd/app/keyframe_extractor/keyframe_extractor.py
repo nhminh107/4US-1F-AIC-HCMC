@@ -37,8 +37,18 @@ from BackEnd.app.keyframe_extractor.sampling import (
 )
 from BackEnd.app.shot_extractor.video_decoder import probe_fps
 
+
+def _stored_frame_path(path: Path) -> Path:
+    """Return a project-relative path when the frame is stored in the project."""
+
+    try:
+        return path.relative_to(PROJECT_ROOT)
+    except ValueError:
+        return path
+
+
 class KeyframeExtractor:
-    """Trích xuất keyframe bổ sung (`source="extracted"`, `frame_role="keyframe"`) cho từng shot."""
+    """Extract additional keyframes with ``source="extracted"``."""
 
     def __init__(
         self,
@@ -154,11 +164,10 @@ class KeyframeExtractor:
                 timestamp_ms=timestamp_ms,
                 fps=fps,
                 frame_idx=candidate_idx,
-                frame_role="keyframe",
                 source="extracted",
                 n=candidate_idx,
-                pts_time=None,
-                frame_path=output_path,
+                pts_time=candidate_idx / fps,
+                frame_path=_stored_frame_path(output_path),
                 width=None,   # Sẽ được cập nhật sau khi decode
                 height=None,  # Sẽ được cập nhật sau khi decode
             )
@@ -187,7 +196,6 @@ class KeyframeExtractor:
                 timestamp_ms=meta.timestamp_ms,
                 fps=meta.fps,
                 frame_idx=meta.frame_idx,
-                frame_role=meta.frame_role,
                 source=meta.source,
                 n=meta.n,
                 pts_time=meta.pts_time,

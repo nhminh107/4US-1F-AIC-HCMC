@@ -1,6 +1,6 @@
 from BackEnd.app.embedding.BaseEmbedding import BaseEmbedder
 from BackEnd.app.embedding.ImageEmbedding import ImageEmbedder
-from BackEnd.app.contracts.pipeline import FrameMetadata, FrameRole
+from BackEnd.app.contracts.pipeline import FrameMetadata
 from pathlib import Path
 from PIL import Image
 embedder = ImageEmbedder()
@@ -38,7 +38,6 @@ def embedding():
     return embed_vec
 
 print(embedding())
-
 
 
 

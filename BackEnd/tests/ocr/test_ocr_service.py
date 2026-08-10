@@ -95,7 +95,6 @@ def make_frame(frame_id: str, frame_path: Path, *, width: int = 200) -> FrameMet
         timestamp_ms=1000,
         fps=25.0,
         frame_idx=25,
-        frame_role="keyframe",
         source="official",
         n=1,
         frame_path=frame_path,

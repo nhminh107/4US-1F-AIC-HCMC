@@ -16,6 +16,7 @@ from BackEnd.app.database.adapter import (
     clip_window_metadata_from_clip_window,
     frame_metadata_from_frame,
     shot_metadata_from_shot,
+    video_metadata_from_video
 )
 from BackEnd.app.database.models import (
     Base,
@@ -33,6 +34,7 @@ from BackEnd.app.contracts.pipeline import (
     ClipWindowMetadata,
     FrameMetadata,
     ShotMetadata,
+    VideoMetadata
 )
 
 load_dotenv()
@@ -153,29 +155,31 @@ class PostgreManager:
         self,
         frame_id: str,
         video_id: str,
-        shot_id: str,
+        shot_id: str | None,
         timestamp_ms: int,
         fps: float,
         frame_idx: int,
-        frame_role: str,
         source: str,
         *,
         n: int | None = None,
-        pts_time: int | None = None,
+        pts_time: float | None = None,
         frame_path: str | None = None,
         width: int | None = None,
         height: int | None = None,
     ) -> Frame:
-        """Insert a frame belonging to an existing shot."""
+        """Insert a frame, optionally belonging to an existing shot."""
 
         with self.session_factory() as session:
-            shot = session.get(Shot, shot_id)
-            if shot is None:
-                raise ValueError(f"Shot '{shot_id}' does not exist.")
-            if shot.video_id != video_id:
-                raise ValueError(
-                    f"Shot '{shot_id}' does not belong to video '{video_id}'."
-                )
+            if source == "official" and shot_id is not None:
+                raise ValueError("Official frames must have shot_id=None.")
+            if shot_id is not None:
+                shot = session.get(Shot, shot_id)
+                if shot is None:
+                    raise ValueError(f"Shot '{shot_id}' does not exist.")
+                if shot.video_id != video_id:
+                    raise ValueError(
+                        f"Shot '{shot_id}' does not belong to video '{video_id}'."
+                    )
 
             frame = Frame(
                 frame_id=frame_id,
@@ -186,13 +190,42 @@ class PostgreManager:
                 timestamp_ms=timestamp_ms,
                 fps=fps,
                 frame_idx=frame_idx,
-                frame_role=frame_role,
                 source=source,
                 frame_path=frame_path,
                 width=width,
                 height=height,
             )
             return self._persist(session, frame)
+
+    def add_clip(
+        self,
+        clip_id: str,
+        shot_id: str,
+        start_ms: int,
+        end_ms: int,
+        *,
+        start_frame_idx: int | None = None,
+        end_frame_idx: int | None = None,
+        sampling_fps: float | None = None,
+        clip_path: str | None = None,
+    ) -> ClipWindow:
+        """Insert a clip window belonging to an existing shot."""
+
+        with self.session_factory() as session:
+            if session.get(Shot, shot_id) is None:
+                raise ValueError(f"Shot '{shot_id}' does not exist.")
+
+            clip = ClipWindow(
+                clip_id=clip_id,
+                shot_id=shot_id,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                start_frame_idx=start_frame_idx,
+                end_frame_idx=end_frame_idx,
+                sampling_fps=sampling_fps,
+                clip_path=clip_path,
+            )
+            return self._persist(session, clip)
 
     def add_ocr(
         self,
@@ -332,6 +365,15 @@ class PostgreManager:
 
             return [frame_metadata_from_frame(frame) for frame in frames]
 
+    def get_list_video(self) -> list[VideoMetadata]:
+        with self.session_factory() as session:
+            statement = (
+                select(Video).order_by(Video.video_id)
+            )
+
+            Videos = session.scalars(statement).all()
+
+            return [video_metadata_from_video(vid) for vid in Videos]
     def get_list_frame_in_shot(self, shot_id: str) -> list[FrameMetadata]:
         """Return all frames belonging to a shot, ordered by frame index."""
 
@@ -402,7 +444,7 @@ def main() -> None:
     #     "keyframe",
     #     "extracted",
     # )
-    print(db.get_frame_record_by_frame_id("1"))
+    print(db.get_list_video())
 
 
 if __name__ == "__main__":

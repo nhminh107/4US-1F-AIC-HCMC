@@ -107,7 +107,6 @@ class RealDataIntegrationTests(unittest.TestCase):
             # Kiểm tra metadata contract
             self.assertEqual(frame.video_id, video_id)
             self.assertEqual(frame.source, "extracted")
-            self.assertEqual(frame.frame_role, "keyframe")
             self.assertTrue(frame.frame_id.startswith(f"{video_id}_E"))
             self.assertLessEqual(len(frame.frame_id), 15, "frame_id phải vừa varchar(15)")
 
