@@ -12,7 +12,8 @@ from BackEnd.app.contracts.embedding import (
     EmbeddingRecord,
 )
 from BackEnd.app.contracts.pipeline import ShotMetadata
-from BackEnd.app.embedding import CONFIG
+from BackEnd import CONFIG
+from BackEnd.CONFIG import SHOT_EMBEDDING_SPACE_ID
 from BackEnd.app.embedding.artifacts.reader import (
     load_success_records,
     load_vector_lookup,
@@ -21,9 +22,6 @@ from BackEnd.app.embedding.artifacts.reader import (
 from BackEnd.app.embedding.artifacts.writer import EmbeddingArtifactWriter
 from BackEnd.app.embedding.common.ids import deterministic_id
 from BackEnd.app.embedding.shot.aggregator import aggregate_shot_clips
-
-SHOT_EMBEDDING_SPACE_ID = "shot.clip_vit_b32.coverage_pool_v1"
-
 
 class ShotEmbeddingService:
     """Aggregate clip embedding artifacts into shot embedding artifacts."""

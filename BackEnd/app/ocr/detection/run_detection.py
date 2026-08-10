@@ -13,18 +13,13 @@ loc theo det_confidence >= 0.6-0.7, cat cac vung chu giu dang numpy array TRONG 
 import os
 from typing import Dict, List, Optional
 
+from BackEnd.CONFIG import (
+    KEYFRAME_OUTPUT_DIR as KEYFRAMES_DIR,
+    OCR_LEGACY_DETECTION_CONFIDENCE_THRESHOLD as DET_CONFIDENCE_THRESHOLD,
+)
 from BackEnd.app.ocr.detection.crop_utils import crop_region
 from BackEnd.app.ocr.detection.detector import TextDetector
 from BackEnd.app.ocr.detection.preprocess import preprocess
-
-# Nguong det_confidence trong khoang 0.6-0.7 de xuat o muc 4 module_ocr.md, giam so
-# vung nhieu/nho ngay tu buoc Detection, giam tai cho Recognition o buoc sau.
-DET_CONFIDENCE_THRESHOLD = 0.65
-
-_OCR_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(_OCR_DIR)))
-
-KEYFRAMES_DIR = os.path.join(_BASE_DIR, "data", "keyframes")
 
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 

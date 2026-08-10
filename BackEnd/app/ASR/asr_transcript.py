@@ -12,20 +12,20 @@ from typing import Any
 import torch
 from chunkformer import ChunkFormerModel
 
+from BackEnd.CONFIG import (
+    ASR_AUDIO_OUTPUT_DIR as DEFAULT_AUDIO_OUTPUT_DIR,
+    ASR_CHUNK_SIZE as DEFAULT_CHUNK_SIZE,
+    ASR_LANGUAGE as DEFAULT_LANGUAGE,
+    ASR_LEFT_CONTEXT_SIZE as DEFAULT_LEFT_CONTEXT_SIZE,
+    ASR_MODEL_ID as DEFAULT_MODEL_ID,
+    ASR_RIGHT_CONTEXT_SIZE as DEFAULT_RIGHT_CONTEXT_SIZE,
+    ASR_TOTAL_BATCH_DURATION_SECONDS as DEFAULT_TOTAL_BATCH_DURATION,
+)
 from BackEnd.app.audio_pre import preprocess_full_video
 from BackEnd.app.audio_pre.schemas import AudioSegment
 from BackEnd.app.contracts.pipeline import TranscriptSegmentResult, VideoMetadata
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MODEL_ID = "khanhld/chunkformer-rnnt-large-vie"
-DEFAULT_AUDIO_OUTPUT_DIR = Path("output/asr_audio")
-DEFAULT_CHUNK_SIZE = 64
-DEFAULT_LEFT_CONTEXT_SIZE = 128
-DEFAULT_RIGHT_CONTEXT_SIZE = 128
-DEFAULT_TOTAL_BATCH_DURATION = 1800
-DEFAULT_LANGUAGE = "vi"
-
 
 class ASR_Model:
     """Transcribe normalized full-video audio with a reusable ChunkFormer model."""

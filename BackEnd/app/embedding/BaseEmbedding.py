@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np 
-from BackEnd.app.embedding import CONFIG as cf 
+from BackEnd import CONFIG as cf
 from sentence_transformers import SentenceTransformer, util
 class BaseEmbedder(ABC): 
     def __init__(self):

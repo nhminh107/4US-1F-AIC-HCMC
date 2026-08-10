@@ -6,6 +6,8 @@ from typing import Protocol
 
 import numpy as np
 
+from BackEnd.CONFIG import EMBEDDING_BATCH_SIZE
+
 from BackEnd.app.contracts.embedding import DecodedFrameBatch, ModelMetadata, VideoAsset
 
 
@@ -16,10 +18,14 @@ class ImageTextEmbeddingAdapter(Protocol):
     def embedding_space_id(self) -> str:
         ...
 
-    def encode_images(self, images, batch_size: int = 64) -> np.ndarray:
+    def encode_images(
+        self, images, batch_size: int = EMBEDDING_BATCH_SIZE
+    ) -> np.ndarray:
         ...
 
-    def encode_texts(self, texts: list[str], batch_size: int = 64) -> np.ndarray:
+    def encode_texts(
+        self, texts: list[str], batch_size: int = EMBEDDING_BATCH_SIZE
+    ) -> np.ndarray:
         ...
 
     def get_dimension(self) -> int:

@@ -7,9 +7,10 @@ import json
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+
+from BackEnd.CONFIG import ClipExtractorConfig
 
 from .contracts import ClipRecord, RecordLike, ShotRecord
 from .exceptions import (
@@ -45,54 +46,6 @@ def _default_clip_id(shot: ShotRecord, one_based_index: int) -> str:
     # Clip while 14 hexadecimal characters keep the value within varchar(15).
     source = "%s:%d" % (shot.shot_id, one_based_index)
     return "C" + hashlib.sha1(source.encode("utf-8")).hexdigest()[:14].upper()
-
-
-@dataclass(frozen=True)
-class ClipExtractorConfig:
-    """Configuration for deterministic overlapping Clip windows."""
-
-    split_threshold_ms: int = 10_000
-    max_clip_duration_ms: int = 10_000
-    stride_ms: int = 8_000
-    min_new_window_gap_ms: int = 2_000
-    sampling_fps: Optional[float] = None
-    materialize_files: bool = False
-    output_root: Path = Path("data/clips")
-    overwrite: bool = False
-    validate_source_duration: bool = True
-    ffmpeg_bin: str = "ffmpeg"
-    ffprobe_bin: str = "ffprobe"
-    video_codec: str = "libx264"
-    audio_codec: str = "aac"
-    preset: str = "veryfast"
-    crf: int = 23
-
-    def __post_init__(self) -> None:
-        if self.split_threshold_ms <= 0:
-            raise ValueError("split_threshold_ms must be greater than 0")
-        if self.max_clip_duration_ms <= 0:
-            raise ValueError("max_clip_duration_ms must be greater than 0")
-        if self.split_threshold_ms > self.max_clip_duration_ms:
-            raise ValueError(
-                "split_threshold_ms must be less than or equal to "
-                "max_clip_duration_ms"
-            )
-        if self.stride_ms <= 0:
-            raise ValueError("stride_ms must be greater than 0")
-        if self.stride_ms > self.max_clip_duration_ms:
-            raise ValueError(
-                "stride_ms must be less than or equal to max_clip_duration_ms"
-            )
-        if self.min_new_window_gap_ms <= 0:
-            raise ValueError("min_new_window_gap_ms must be greater than 0")
-        if self.min_new_window_gap_ms > self.stride_ms:
-            raise ValueError(
-                "min_new_window_gap_ms must be less than or equal to stride_ms"
-            )
-        if self.sampling_fps is not None and self.sampling_fps <= 0:
-            raise ValueError("sampling_fps must be greater than 0")
-        if not 0 <= self.crf <= 51:
-            raise ValueError("crf must be between 0 and 51")
 
 
 class ClipExtractor:

@@ -11,10 +11,9 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
-# Khoang cach Hamming toi da giua 2 perceptual hash de coi la "trung lap". Cang gan 0
-# cang khat khe (chi bat anh gan nhu giong het), tang len se bat duoc ca cac bien the
-# nho do nen anh/anti-aliasing nhung de bi nham cac vung chu khac nhau la trung lap.
-HAMMING_DISTANCE_THRESHOLD = 4
+from BackEnd.CONFIG import (
+    OCR_DEDUP_HAMMING_DISTANCE_THRESHOLD as HAMMING_DISTANCE_THRESHOLD,
+)
 
 
 def perceptual_hash(image: np.ndarray, hash_size: int = 8) -> int:

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence, Set
 
-DEFAULT_TARGET_INTERVAL_MS = 2500  # Mốc thời gian mặc định: ~2.5s / 1 keyframe
-DEFAULT_MIN_FRAME_GAP = 5          # Khoảng cách tối thiểu giữa 2 keyframe (tránh gần nhau)
-DEFAULT_MAX_ADDITIONAL_PER_SHOT = 5 # Tối đa số keyframe bổ sung trích xuất cho 1 shot
+from BackEnd.CONFIG import (
+    KEYFRAME_MAX_ADDITIONAL_PER_SHOT as DEFAULT_MAX_ADDITIONAL_PER_SHOT,
+    KEYFRAME_MIN_FRAME_GAP as DEFAULT_MIN_FRAME_GAP,
+    KEYFRAME_TARGET_INTERVAL_MS as DEFAULT_TARGET_INTERVAL_MS,
+)
 
 
 def select_additional_keyframe_indices(

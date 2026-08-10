@@ -12,14 +12,10 @@ text theo bbox (postprocess.py) truoc khi gop thanh `texts` cho tung anh.
 """
 from typing import Dict, List, Optional
 
+from BackEnd.CONFIG import OCR_RECOGNITION_BATCH_SIZE as BATCH_SIZE
 from BackEnd.app.ocr.recognition.dedup import DedupCache, is_duplicate_hash
 from BackEnd.app.ocr.recognition.postprocess import merge_texts, sort_regions_reading_order
 from BackEnd.app.ocr.recognition.recognizer import TextRecognizer
-
-# So crop gop trong 1 lan goi VietOCR predict_batch(). 16-32 tuy RAM/VRAM may dang
-# chay (muc 5 module_ocr.md) - may yeu thi giam xuong 8-16.
-BATCH_SIZE = 32
-
 
 def run_recognition_on_chunk(
     detection_results: List[Dict],

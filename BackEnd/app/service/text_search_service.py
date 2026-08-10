@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from BackEnd.CONFIG import ELASTICSEARCH_BULK_BATCH_SIZE
 from BackEnd.app.contracts.search import TextIndexDocument, TextSearchHit, TextSearchQuery
 from BackEnd.app.database.elasticsearch_db import ElasticsearchManager
 from BackEnd.app.database.elasticsearch_documents import ElasticsearchDocumentBuilder
@@ -36,7 +37,7 @@ class TextSearchService:
         *,
         index_name: str,
         index_build_id: str = "build-auto",
-        batch_size: int = 500,
+        batch_size: int = ELASTICSEARCH_BULK_BATCH_SIZE,
         publish_aliases: bool = True,
     ) -> dict[str, int]:
         """Build and index documents from PostgreSQL ORM records using eager loading.

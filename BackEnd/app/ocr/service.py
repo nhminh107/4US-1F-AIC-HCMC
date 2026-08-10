@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from BackEnd.app.contracts.pipeline import FrameMetadata, OCRResult
-from BackEnd.app.ocr.config import OCRConfig
+from BackEnd.CONFIG import OCRConfig
 from BackEnd.app.ocr.engine import HybridOCREngine, OCREngine
 from BackEnd.app.ocr.geometry import (
     normalize_polygon,

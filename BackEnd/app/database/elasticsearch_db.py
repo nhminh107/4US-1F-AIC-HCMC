@@ -9,6 +9,10 @@ from typing import Any, Callable
 
 from dotenv import load_dotenv
 
+from BackEnd.CONFIG import (
+    ELASTICSEARCH_BULK_BATCH_SIZE,
+    ELASTICSEARCH_INDEX_SCHEMA_VERSION as INDEX_SCHEMA_VERSION,
+)
 from BackEnd.app.contracts.search import (
     TextIndexDocument,
     TextSearchHit,
@@ -25,7 +29,6 @@ except ImportError:  # pragma: no cover - exercised only when dependency is abse
 
 load_dotenv()
 
-INDEX_SCHEMA_VERSION = "text-index-schema@1.0.0"
 DEFAULT_SOURCE_ALIASES: dict[TextSourceType, str] = {
     "video_metadata": "aic_hcm2026_text_metadata_active",
     "ocr": "aic_hcm2026_text_ocr_active",
@@ -182,7 +185,7 @@ class ElasticsearchManager:
         *,
         index_name: str | None = None,
         refresh: bool = False,
-        chunk_size: int = 500,
+        chunk_size: int = ELASTICSEARCH_BULK_BATCH_SIZE,
     ) -> dict[str, int]:
         """Bulk upsert text documents and return a small result summary."""
 

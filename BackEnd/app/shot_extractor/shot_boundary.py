@@ -22,10 +22,11 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from BackEnd.CONFIG import (
+    SHOT_BOUNDARY_THRESHOLD as DEFAULT_THRESHOLD,
+    SHOT_MIN_DURATION_MS as DEFAULT_MIN_SHOT_DURATION_MS,
+)
 from BackEnd.app.contracts.pipeline import ShotMetadata
-
-DEFAULT_THRESHOLD = 0.5
-DEFAULT_MIN_SHOT_DURATION_MS = 500
 
 
 def predictions_to_scene_frames(

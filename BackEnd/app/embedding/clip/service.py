@@ -15,16 +15,14 @@ from BackEnd.app.contracts.embedding import (
     EmbeddingRecord,
     VideoAsset,
 )
-from BackEnd.app.embedding import CONFIG
+from BackEnd import CONFIG
+from BackEnd.CONFIG import CLIP_EMBEDDING_SPACE_ID
 from BackEnd.app.embedding.artifacts.writer import EmbeddingArtifactWriter
 from BackEnd.app.embedding.clip.aggregator import aggregate_clip_frames
 from BackEnd.app.embedding.clip.planner import plan_video_work
 from BackEnd.app.embedding.clip.sampler import uniform_midpoint_timestamps
 from BackEnd.app.embedding.common.ids import deterministic_id
 from BackEnd.app.embedding.common.interfaces import ImageTextEmbeddingAdapter, VideoDecoder
-
-CLIP_EMBEDDING_SPACE_ID = "clip.clip_vit_b32.masked_mean16_v1"
-
 
 class ClipEmbeddingService:
     """Create clip vectors and write a validated clip embedding artifact."""

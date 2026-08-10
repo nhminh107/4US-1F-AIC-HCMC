@@ -8,9 +8,8 @@ from typing import Iterable
 
 import numpy as np
 
+from BackEnd.CONFIG import OBJECT_DETECTION_IMAGE_EXTENSIONS as IMAGE_EXTENSIONS
 from BackEnd.app.object_detection.schemas import Detection
-
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 
 def _cv2():

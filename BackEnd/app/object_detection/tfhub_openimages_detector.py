@@ -7,13 +7,14 @@ from typing import Any
 
 import numpy as np
 
+from BackEnd.CONFIG import (
+    OBJECT_DETECTION_CONFIDENCE_THRESHOLD,
+    OPENIMAGES_MODEL_NAME as MODEL_NAME,
+    OPENIMAGES_MODEL_URL as MODEL_URL,
+    OPENIMAGES_MODEL_VERSION as MODEL_VERSION,
+)
 from BackEnd.app.object_detection.detector import Detector
 from BackEnd.app.object_detection.schemas import BoundingBox, Detection
-
-
-MODEL_URL = "https://tfhub.dev/google/faster_rcnn/openimages_v4/inception_resnet_v2/1"
-MODEL_NAME = "faster_rcnn/inception_resnet_v2"
-MODEL_VERSION = "openimages_v4/1"
 
 
 def _to_list(value: Any) -> list[Any]:
@@ -51,7 +52,7 @@ class TFHubOpenImagesDetector(Detector):
         self,
         *,
         model_url: str = MODEL_URL,
-        confidence_threshold: float = 0.25,
+        confidence_threshold: float = OBJECT_DETECTION_CONFIDENCE_THRESHOLD,
         model: Any | None = None,
     ) -> None:
         if not 0.0 <= confidence_threshold <= 1.0:

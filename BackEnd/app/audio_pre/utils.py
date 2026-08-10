@@ -9,16 +9,16 @@ import wave
 from pathlib import Path
 from typing import Sequence
 
+from BackEnd.CONFIG import (
+    AUDIO_CHANNELS as CHANNELS,
+    AUDIO_SAMPLE_RATE as SAMPLE_RATE,
+    AUDIO_SAMPLE_WIDTH_BYTES as SAMPLE_WIDTH_BYTES,
+    AUDIO_VAD_FRAME_DURATION_MS as VAD_FRAME_DURATION_MS,
+    AUDIO_VAD_MODE as VAD_MODE,
+)
 from BackEnd.app.contracts.pipeline import ShotMetadata
 
 logger = logging.getLogger(__name__)
-
-SAMPLE_RATE = 16000
-CHANNELS = 1
-SAMPLE_WIDTH_BYTES = 2
-VAD_FRAME_DURATION_MS = 30
-VAD_MODE = 2
-
 
 class AudioPreprocessingError(RuntimeError):
     """Base exception for audio preprocessing infrastructure failures."""

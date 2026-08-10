@@ -8,7 +8,7 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from BackEnd.app.ocr.config import OCRConfig
+from BackEnd.CONFIG import OCRConfig
 from BackEnd.app.ocr.schemas import DetectedTextRegion, RecognizedText
 
 
