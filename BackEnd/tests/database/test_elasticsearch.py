@@ -134,9 +134,12 @@ class TextSearchContractTests(unittest.TestCase):
         self.assertEqual(query_min.top_k, 1)
         self.assertEqual(query_min.from_, 0)
 
-        query_max = TextSearchQuery(query_text="max", top_k=10000, from_=5000, sort_by="-timestamp_ms")
-        self.assertEqual(query_max.top_k, 10000)
+        query_max = TextSearchQuery(query_text="max", top_k=5000, from_=5000, sort_by="-timestamp_ms")
+        self.assertEqual(query_max.top_k, 5000)
         self.assertEqual(query_max.from_, 5000)
+
+        with self.assertRaisesRegex(ValueError, r"from_ \+ top_k must not exceed 10000."):
+            TextSearchQuery(query_text="exceed", top_k=6000, from_=5000)
 
     def test_text_search_query_multiline_whitespace_and_newlines_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "query_text"):
@@ -276,18 +279,22 @@ class ElasticsearchManagerTests(unittest.TestCase):
 
         self.assertEqual(bulk_calls, [])
 
-    def test_index_documents_rejects_duplicate_doc_ids_before_bulk_call(self) -> None:
-        bulk_calls = []
+    def test_index_documents_deduplicates_duplicate_doc_ids_in_batch(self) -> None:
+        captured_actions = []
+
+        def fake_bulk(client, actions, **kwargs):
+            captured_actions.extend(list(actions))
+            return (1, [])
+
         manager = ElasticsearchManager(
             client=FakeElasticsearchClient(),
-            bulk_helper=lambda *args, **kwargs: bulk_calls.append((args, kwargs)),
+            bulk_helper=fake_bulk,
         )
         document = make_document()
 
-        with self.assertRaisesRegex(ValueError, "Duplicate doc_id"):
-            manager.index_documents([document, document], index_name="test-index")
-
-        self.assertEqual(bulk_calls, [])
+        summary = manager.index_documents([document, document], index_name="test-index")
+        self.assertEqual(summary, {"indexed": 1, "failed": 0})
+        self.assertEqual(len(captured_actions), 1)
 
     def test_index_documents_uses_doc_id_as_bulk_id_and_reports_success(self) -> None:
         captured_actions = []

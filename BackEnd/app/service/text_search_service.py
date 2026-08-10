@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from BackEnd.CONFIG import ELASTICSEARCH_BULK_BATCH_SIZE
+from BackEnd.CONFIG import ELASTICSEARCH_BULK_BATCH_SIZE, ELASTICSEARCH_STREAM_BATCH_SIZE
 from BackEnd.app.contracts.search import TextIndexDocument, TextSearchHit, TextSearchQuery
 from BackEnd.app.database.elasticsearch_db import ElasticsearchManager
 from BackEnd.app.database.elasticsearch_documents import ElasticsearchDocumentBuilder
@@ -37,32 +37,49 @@ class TextSearchService:
         *,
         index_name: str,
         index_build_id: str = "build-auto",
-        batch_size: int = ELASTICSEARCH_BULK_BATCH_SIZE,
+        batch_size: int = ELASTICSEARCH_STREAM_BATCH_SIZE,
         publish_aliases: bool = True,
     ) -> dict[str, int]:
-        """Build and index documents from PostgreSQL ORM records using eager loading.
+        """Build and index documents from PostgreSQL ORM records using streaming batching.
 
-        Prevents N+1 queries by pre-fetching relationships (OCR records, captions).
+        Prevents memory exhaustion by processing records in chunks, flushing each chunk to
+        Elasticsearch with refresh=False, and clearing the SQLAlchemy session.
         Returns total count of indexed and failed documents.
         """
 
-        documents: list[TextIndexDocument] = []
+        total_indexed = 0
+        total_failed = 0
+        current_batch: list[TextIndexDocument] = []
+
+        def _index_chunk(chunk_docs: list[TextIndexDocument]) -> None:
+            nonlocal total_indexed, total_failed
+            if not chunk_docs:
+                return
+            res = self.manager.index_documents(
+                chunk_docs,
+                index_name=index_name,
+                refresh=False,
+                chunk_size=batch_size,
+            )
+            total_indexed += res.get("indexed", 0)
+            total_failed += res.get("failed", 0)
 
         # 1. Video metadata
-        videos = session.scalars(select(Video)).all()
-        for video in videos:
+        for video in session.scalars(select(Video)).yield_per(batch_size):
             doc = self.builder.build_video_metadata_document(
                 video,
                 index_build_id=index_build_id,
             )
             if doc:
-                documents.append(doc)
+                current_batch.append(doc)
+                if len(current_batch) >= batch_size:
+                    _index_chunk(current_batch)
+                    current_batch = []
+                    session.clear()
 
-        # 2. Keyframes with OCR records (eager load ocr_records to avoid N+1)
-        frames = session.scalars(
-            select(Frame).options(selectinload(Frame.ocr_records))
-        ).all()
-        for frame in frames:
+        # 2. Keyframes with OCR records
+        frame_query = select(Frame).options(selectinload(Frame.ocr_records))
+        for frame in session.scalars(frame_query).yield_per(batch_size):
             if frame.ocr_records:
                 doc = self.builder.build_ocr_document(
                     frame,
@@ -70,49 +87,58 @@ class TextSearchService:
                     index_build_id=index_build_id,
                 )
                 if doc:
-                    documents.append(doc)
+                    current_batch.append(doc)
+                    if len(current_batch) >= batch_size:
+                        _index_chunk(current_batch)
+                        current_batch = []
+                        session.clear()
 
         # 3. Transcript segments
-        transcripts = session.scalars(select(TranscriptSegment)).all()
-        for segment in transcripts:
+        for segment in session.scalars(select(TranscriptSegment)).yield_per(batch_size):
             doc = self.builder.build_transcript_document(
                 segment,
                 index_build_id=index_build_id,
             )
             if doc:
-                documents.append(doc)
+                current_batch.append(doc)
+                if len(current_batch) >= batch_size:
+                    _index_chunk(current_batch)
+                    current_batch = []
+                    session.clear()
 
-        # 4. Captions (eager load frame, shot, clip to resolve video_id without N+1)
-        captions = session.scalars(
-            select(Caption).options(
-                joinedload(Caption.frame),
-                joinedload(Caption.shot),
-                joinedload(Caption.clip),
-            )
-        ).all()
-        for caption in captions:
+        # 4. Captions
+        caption_query = select(Caption).options(
+            joinedload(Caption.frame),
+            joinedload(Caption.shot),
+            joinedload(Caption.clip),
+        )
+        for caption in session.scalars(caption_query).yield_per(batch_size):
             try:
                 doc = self.builder.build_caption_document(
                     caption,
                     index_build_id=index_build_id,
                 )
                 if doc:
-                    documents.append(doc)
-            except ValueError:
+                    current_batch.append(doc)
+                    if len(current_batch) >= batch_size:
+                        _index_chunk(current_batch)
+                        current_batch = []
+                        session.clear()
+            except Exception:
                 continue
 
-        # Create physical index if not created yet, then bulk index documents
-        summary = self.manager.index_documents(
-            documents,
-            index_name=index_name,
-            refresh=True,
-            chunk_size=batch_size,
-        )
+        # Flush remaining docs and refresh Lucene index
+        if current_batch:
+            _index_chunk(current_batch)
+            current_batch = []
+            session.clear()
+
+        self.manager.refresh_index(index_name)
 
         if publish_aliases:
             self.manager.publish_source_aliases(index_name)
 
-        return summary
+        return {"indexed": total_indexed, "failed": total_failed}
 
     def health_check(self, index_name: str | None = None) -> dict[str, Any]:
         """Check Elasticsearch connectivity and optional index alias state."""

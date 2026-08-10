@@ -419,7 +419,7 @@ class ElasticsearchDocumentBuilderTests(unittest.TestCase):
         self.assertIsNotNone(doc)
         self.assertEqual(doc.video_id, "L21_V001")
 
-    def test_caption_document_unresolved_video_id_raises_value_error(self) -> None:
+    def test_caption_document_unresolved_video_id_returns_none(self) -> None:
         orphaned_caption = SimpleNamespace(
             caption_id=11,
             frame_id=None,
@@ -434,11 +434,11 @@ class ElasticsearchDocumentBuilderTests(unittest.TestCase):
             prompt_version="p1",
         )
 
-        with self.assertRaisesRegex(ValueError, "caption video_id could not be resolved"):
-            self.builder.build_caption_document(
-                orphaned_caption,
-                index_build_id="build-test",
-            )
+        doc = self.builder.build_caption_document(
+            orphaned_caption,
+            index_build_id="build-test",
+        )
+        self.assertIsNone(doc)
 
     def test_ocr_document_with_boundary_coordinates_0_and_1(self) -> None:
         frame = SimpleNamespace(

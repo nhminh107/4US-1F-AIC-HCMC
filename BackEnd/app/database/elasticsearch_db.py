@@ -7,10 +7,15 @@ from datetime import UTC, datetime
 import os
 from typing import Any, Callable
 
+import logging
+import os
+from typing import Any, Callable
+
 from dotenv import load_dotenv
 
 from BackEnd.CONFIG import (
     ELASTICSEARCH_BULK_BATCH_SIZE,
+    ELASTICSEARCH_BULK_MAX_BYTES,
     ELASTICSEARCH_INDEX_SCHEMA_VERSION as INDEX_SCHEMA_VERSION,
 )
 from BackEnd.app.contracts.search import (
@@ -19,6 +24,8 @@ from BackEnd.app.contracts.search import (
     TextSearchQuery,
     TextSourceType,
 )
+
+logger = logging.getLogger(__name__)
 
 try:
     from elasticsearch import Elasticsearch
@@ -75,6 +82,7 @@ class ElasticsearchManager:
         """Return settings and mappings for the text evidence index."""
 
         text_field = {"type": "text", "analyzer": "aic_vi_text"}
+        keyword_field = {"type": "keyword", "norms": False}
         return {
             "settings": {
                 "analysis": {
@@ -96,24 +104,31 @@ class ElasticsearchManager:
                             "filter": [
                                 "lowercase",
                                 "aic_ascii_folding",
+                            ],
+                        },
+                        "aic_vi_shingle": {
+                            "tokenizer": "standard",
+                            "filter": [
+                                "lowercase",
+                                "aic_ascii_folding",
                                 "aic_shingle",
                             ],
-                        }
+                        },
                     },
                 }
             },
             "mappings": {
                 "properties": {
-                    "doc_id": {"type": "keyword"},
-                    "source_type": {"type": "keyword"},
-                    "video_id": {"type": "keyword"},
-                    "entity_id": {"type": "keyword"},
-                    "shot_id": {"type": "keyword"},
-                    "frame_id": {"type": "keyword"},
-                    "clip_id": {"type": "keyword"},
-                    "segment_id": {"type": "keyword"},
+                    "doc_id": keyword_field,
+                    "source_type": keyword_field,
+                    "video_id": keyword_field,
+                    "entity_id": keyword_field,
+                    "shot_id": keyword_field,
+                    "frame_id": keyword_field,
+                    "clip_id": keyword_field,
+                    "segment_id": keyword_field,
                     "caption_id": {"type": "long"},
-                    "language": {"type": "keyword"},
+                    "language": keyword_field,
                     "timestamp_ms": {"type": "long"},
                     "start_ms": {"type": "long"},
                     "end_ms": {"type": "long"},
@@ -122,26 +137,36 @@ class ElasticsearchManager:
                     "keywords": {
                         "type": "text",
                         "analyzer": "aic_vi_text",
-                        "fields": {"raw": {"type": "keyword"}},
+                        "fields": {"raw": keyword_field},
                     },
-                    "content": text_field,
+                    "content": {
+                        "type": "text",
+                        "analyzer": "aic_vi_text",
+                        "fields": {
+                            "shingle": {
+                                "type": "text",
+                                "analyzer": "aic_vi_shingle",
+                            }
+                        },
+                    },
+                    "ocr_text": text_field,
                     "regions": {
                         "type": "nested",
                         "properties": {
                             "n": {"type": "integer"},
                             "text": text_field,
-                            "language": {"type": "keyword"},
+                            "language": keyword_field,
                             "x_min": {"type": "float"},
                             "x_max": {"type": "float"},
                             "y_min": {"type": "float"},
                             "y_max": {"type": "float"},
                         },
                     },
-                    "model_name": {"type": "keyword"},
-                    "model_version": {"type": "keyword"},
-                    "prompt_version": {"type": "keyword"},
-                    "index_schema_version": {"type": "keyword"},
-                    "index_build_id": {"type": "keyword"},
+                    "model_name": keyword_field,
+                    "model_version": keyword_field,
+                    "prompt_version": keyword_field,
+                    "index_schema_version": keyword_field,
+                    "index_build_id": keyword_field,
                     "indexed_at": {"type": "date"},
                 }
             },
@@ -151,6 +176,11 @@ class ElasticsearchManager:
         """Create a physical Elasticsearch index."""
 
         self.client.indices.create(index=index_name, body=self.index_definition())
+
+    def refresh_index(self, index_name: str) -> None:
+        """Explicitly refresh Lucene index segments."""
+
+        self.client.indices.refresh(index=index_name)
 
     def publish_source_aliases(self, index_name: str) -> None:
         """Atomically point source-specific filtered aliases at one index."""
@@ -186,6 +216,7 @@ class ElasticsearchManager:
         index_name: str | None = None,
         refresh: bool = False,
         chunk_size: int = ELASTICSEARCH_BULK_BATCH_SIZE,
+        max_chunk_bytes: int = ELASTICSEARCH_BULK_MAX_BYTES,
     ) -> dict[str, int]:
         """Bulk upsert text documents and return a small result summary."""
 
@@ -202,15 +233,22 @@ class ElasticsearchManager:
                 "Use the versioned physical index, not a source alias."
             )
 
-        doc_ids = [document.doc_id for document in valid_documents]
-        if len(set(doc_ids)) != len(doc_ids):
-            raise ValueError("Duplicate doc_id values are not allowed in one batch.")
+        # In-memory deduplication per batch
+        deduped_docs: dict[str, TextIndexDocument] = {}
+        for document in valid_documents:
+            if document.doc_id in deduped_docs:
+                logger.warning(
+                    "Duplicate doc_id '%s' found in batch, keeping latest version.",
+                    document.doc_id,
+                )
+            deduped_docs[document.doc_id] = document
+        unique_documents = list(deduped_docs.values())
 
         total_indexed = 0
         total_failed = 0
 
-        for i in range(0, len(valid_documents), chunk_size):
-            chunk = valid_documents[i : i + chunk_size]
+        for i in range(0, len(unique_documents), chunk_size):
+            chunk = unique_documents[i : i + chunk_size]
             actions = [
                 {
                     "_op_type": "index",
@@ -222,12 +260,13 @@ class ElasticsearchManager:
             ]
 
             try:
+                client = self.client.options(request_timeout=self.request_timeout)
                 success_count, errors = self.bulk_helper(
-                    self.client,
+                    client,
                     actions,
                     refresh=refresh,
+                    max_chunk_bytes=max_chunk_bytes,
                     raise_on_error=False,
-                    request_timeout=self.request_timeout,
                 )
                 total_indexed += int(success_count)
                 total_failed += len(errors or [])
@@ -239,10 +278,9 @@ class ElasticsearchManager:
     def search(self, query: TextSearchQuery) -> list[TextSearchHit]:
         """Search source aliases and parse raw Elasticsearch hits."""
 
-        response = self.client.search(
+        response = self.client.options(request_timeout=self.request_timeout).search(
             index=self._aliases_for_query(query),
             body=self._search_body(query),
-            request_timeout=self.request_timeout,
         )
         return [self._parse_hit(hit) for hit in response.get("hits", {}).get("hits", [])]
 
@@ -314,7 +352,7 @@ class ElasticsearchManager:
             {
                 "multi_match": {
                     "query": query.query_text,
-                    "fields": ["title^5", "keywords^4", "content^3", "description"],
+                    "fields": ["title^5", "keywords^4", "content^3", "ocr_text^3", "description"],
                     "type": "best_fields",
                 }
             },

@@ -94,6 +94,7 @@ class ElasticsearchDocumentBuilder:
             shot_id=getattr(frame, "shot_id", None),
             frame_id=frame_id,
             timestamp_ms=getattr(frame, "timestamp_ms", None),
+            ocr_text=content,
             regions=tuple(regions),
         )
 
@@ -135,6 +136,9 @@ class ElasticsearchDocumentBuilder:
 
         caption_id = getattr(caption, "caption_id")
         resolved_video_id = video_id or self._resolve_caption_video_id(caption)
+        if not resolved_video_id:
+            return None
+
         return TextIndexDocument(
             doc_id=f"caption:{caption_id}:v1",
             source_type="caption",
@@ -182,7 +186,7 @@ class ElasticsearchDocumentBuilder:
         return None
 
     @staticmethod
-    def _resolve_caption_video_id(caption: Any) -> str:
+    def _resolve_caption_video_id(caption: Any) -> str | None:
         frame = getattr(caption, "frame", None)
         if frame is not None and getattr(frame, "video_id", None):
             return str(frame.video_id)
@@ -196,4 +200,4 @@ class ElasticsearchDocumentBuilder:
         if clip_shot is not None and getattr(clip_shot, "video_id", None):
             return str(clip_shot.video_id)
 
-        raise ValueError("caption video_id could not be resolved.")
+        return None

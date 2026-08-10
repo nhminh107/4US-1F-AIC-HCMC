@@ -64,6 +64,7 @@ class TextIndexDocument:
     end_ms: int | None = None
     title: str | None = None
     description: str | None = None
+    ocr_text: str | None = None
     keywords: tuple[str, ...] = field(default_factory=tuple)
     regions: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     model_name: str | None = None
@@ -135,8 +136,8 @@ class TextSearchQuery:
     start_ms: int | None = None
     end_ms: int | None = None
     ocr_region: str | None = None
-    use_fuzzy: bool = True
-    use_highlight: bool = True
+    use_fuzzy: bool = False
+    use_highlight: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -155,6 +156,9 @@ class TextSearchQuery:
         if self.page > 1 and self.from_ == 0:
             computed_from = (self.page - 1) * self.top_k
         object.__setattr__(self, "from_", computed_from)
+
+        if self.from_ + self.top_k > 10_000:
+            raise ValueError("from_ + top_k must not exceed 10000.")
 
         source_types = _normalize_tuple(self.source_types, "source_types")
         for source_type in source_types:
