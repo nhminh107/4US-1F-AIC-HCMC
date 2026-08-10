@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import math
 from pathlib import Path
 from typing import Any, Literal
 
@@ -80,6 +81,24 @@ class OCRResult:
     y_min: float
     y_max: float
     language: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the persisted OCR region contract."""
+
+        if not self.frame_id:
+            raise ValueError("OCRResult.frame_id must not be empty.")
+        if self.n < 0:
+            raise ValueError("OCRResult.n must be non-negative.")
+        if not self.text.strip():
+            raise ValueError("OCRResult.text must not be empty.")
+
+        coordinates = (self.x_min, self.x_max, self.y_min, self.y_max)
+        if not all(math.isfinite(value) for value in coordinates):
+            raise ValueError("OCRResult coordinates must be finite.")
+        if not all(0.0 <= value <= 1.0 for value in coordinates):
+            raise ValueError("OCRResult coordinates must be normalized to [0, 1].")
+        if self.x_min >= self.x_max or self.y_min >= self.y_max:
+            raise ValueError("OCRResult bounding box must have positive area.")
 
 
 @dataclass(frozen=True, slots=True)
