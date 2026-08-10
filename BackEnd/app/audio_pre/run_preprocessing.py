@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from BackEnd.CONFIG import AUDIO_PREPROCESSING_OUTPUT_DIR as DEFAULT_OUTPUT_DIR
 from BackEnd.app.contracts.pipeline import ShotMetadata, VideoMetadata
 
 from . import extractor, normalizer, utils, vad
@@ -15,9 +16,6 @@ from .exporter import save_audio_segments_json
 from .schemas import AudioSegment
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_OUTPUT_DIR = Path("output/audio_pre")
-
 
 def segment_shot(
     raw_audio_path: Path,

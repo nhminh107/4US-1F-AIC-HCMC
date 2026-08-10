@@ -20,6 +20,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from BackEnd.CONFIG import (
+    PROJECT_ROOT,
+    SHOT_VIDEO_DIR as DEFAULT_VIDEO_DIR,
+    SHOT_WEIGHTS_PATH as DEFAULT_WEIGHTS_PATH,
+    SHOT_WINDOW_BATCH_SIZE,
+)
 from BackEnd.app.contracts.pipeline import ShotMetadata
 from BackEnd.app.shot_extractor.shot_boundary import (
     DEFAULT_MIN_SHOT_DURATION_MS,
@@ -29,10 +35,6 @@ from BackEnd.app.shot_extractor.shot_boundary import (
 )
 from BackEnd.app.shot_extractor.transnetv2_model import TransNetV2
 from BackEnd.app.shot_extractor.video_decoder import decode_frames_for_transnet, probe_fps
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_VIDEO_DIR = PROJECT_ROOT / "data" / "video"
-DEFAULT_WEIGHTS_PATH = PROJECT_ROOT / "data" / "models" / "transnetv2-pytorch-weights.pth"
 
 # Cấu hình sliding-window inference cố định của TransNetV2 (xem
 # https://github.com/soCzech/TransNetV2 inference/transnetv2.py `predict_frames`):
@@ -63,7 +65,7 @@ class ShotExtractor:
         threshold: float = DEFAULT_THRESHOLD,
         min_shot_duration_ms: int = DEFAULT_MIN_SHOT_DURATION_MS,
         video_dir: str | Path = DEFAULT_VIDEO_DIR,
-        window_batch_size: int = 8,
+        window_batch_size: int = SHOT_WINDOW_BATCH_SIZE,
     ) -> None:
         """Cấu hình extractor. Model TransNetV2 được nạp lazy (khi thật sự cần).
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from BackEnd.app.clip_extractor import plan_clip_windows
 from BackEnd.app.contracts.embedding import ClipRecord
 from BackEnd.app.contracts.pipeline import ShotMetadata
-from BackEnd.app.embedding.CONFIG import ClipBuilderConfig
+from BackEnd.CONFIG import ClipBuilderConfig
 from BackEnd.app.embedding.common.ids import deterministic_id
 
 

@@ -19,7 +19,7 @@ from BackEnd.app.contracts.embedding import (
     EntityType,
 )
 from BackEnd.app.embedding.artifacts.checksum import sha256_file
-from BackEnd.app.embedding.CONFIG import ArtifactWriterConfig
+from BackEnd.CONFIG import ArtifactWriterConfig
 
 
 class EmbeddingArtifactWriter:

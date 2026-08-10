@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from BackEnd.app.contracts.embedding import EmbeddingArtifactManifest
-from BackEnd.app.embedding.CONFIG import EntityType
+from BackEnd.CONFIG import EntityType
 from BackEnd.app.embedding.artifacts.checksum import sha256_file
 
 

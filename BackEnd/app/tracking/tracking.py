@@ -22,7 +22,7 @@ from BackEnd.app.contracts.pipeline import (
 from BackEnd.app.object_detection.detector import Detector
 from BackEnd.app.object_detection.openimages_jsonl import detect_image_array
 from BackEnd.app.object_detection.tfhub_openimages_detector import TFHubOpenImagesDetector
-from BackEnd.app.tracking.CONFIG import TrackingConfig
+from BackEnd.CONFIG import TrackingConfig
 
 
 @dataclass(frozen=True, slots=True)

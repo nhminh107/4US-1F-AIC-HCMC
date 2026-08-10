@@ -10,14 +10,14 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from BackEnd.CONFIG import (
+    PROJECT_ROOT,
+    VIDEO_DESCRIPTION_MAX_LENGTH as DESCRIPTION_MAX_LENGTH,
+    VIDEO_DIR as DEFAULT_VIDEO_DIR,
+    VIDEO_METADATA_DIR as DEFAULT_METADATA_DIR,
+)
 from BackEnd.app.database.models import Video
 from BackEnd.app.database.postgre_db import PostgreManager
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_METADATA_DIR = PROJECT_ROOT / "data/media-info-aic25-b1/media-info"
-DEFAULT_VIDEO_DIR = PROJECT_ROOT / "data/video"
-DESCRIPTION_MAX_LENGTH = 500
-
 
 def ingest_videos(
     metadata_dir: str | Path = DEFAULT_METADATA_DIR,

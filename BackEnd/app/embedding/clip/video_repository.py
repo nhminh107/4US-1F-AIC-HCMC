@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from BackEnd.CONFIG import PROJECT_ROOT, VIDEO_DIR as DEFAULT_VIDEO_DIR
 from BackEnd.app.contracts.embedding import VideoAsset
 from BackEnd.app.embedding.common.errors import MediaNotFoundError
-
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_VIDEO_DIR = PROJECT_ROOT / "data" / "video"
-
 
 class VideoRepository:
     """Resolve video IDs to local media paths without hard-coded absolutes."""
@@ -52,5 +49,4 @@ class VideoRepository:
                     return VideoAsset(video_id=video_id, video_uri=match)
 
         raise MediaNotFoundError(f"Video media not found for video_id={video_id}.")
-
 

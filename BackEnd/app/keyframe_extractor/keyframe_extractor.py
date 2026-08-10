@@ -8,6 +8,11 @@ from __future__ import annotations
 from collections.abc import Sequence, Set
 from pathlib import Path
 
+from BackEnd.CONFIG import (
+    KEYFRAME_OUTPUT_DIR as DEFAULT_KEYFRAME_DIR,
+    PROJECT_ROOT,
+    VIDEO_DIR as DEFAULT_VIDEO_DIR,
+)
 from BackEnd.app.contracts.pipeline import FrameMetadata, ShotMetadata
 from BackEnd.app.keyframe_extractor.frame_decoder import extract_and_save_frames
 from BackEnd.app.keyframe_extractor.sampling import (
@@ -16,11 +21,6 @@ from BackEnd.app.keyframe_extractor.sampling import (
     select_additional_keyframe_indices,
 )
 from BackEnd.app.shot_extractor.video_decoder import probe_fps
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_VIDEO_DIR = PROJECT_ROOT / "data" / "video"
-DEFAULT_KEYFRAME_DIR = PROJECT_ROOT / "data" / "keyframes"
-
 
 class KeyframeExtractor:
     """Trích xuất keyframe bổ sung (`source="extracted"`, `frame_role="keyframe"`) cho từng shot."""

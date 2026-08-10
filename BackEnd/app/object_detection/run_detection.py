@@ -6,6 +6,13 @@ import argparse
 import os
 from typing import Optional
 
+from BackEnd.CONFIG import (
+    OBJECT_DETECTION_CHUNK_SIZE as CHUNK_SIZE,
+    OBJECT_DETECTION_CONFIDENCE_THRESHOLD,
+    OBJECT_DETECTION_KEYFRAMES_DIR,
+    OBJECT_DETECTION_NMS_IOU_THRESHOLD,
+    OBJECT_DETECTION_OUTPUT_PATH,
+)
 from BackEnd.app.object_detection.detector import Detector
 from BackEnd.app.object_detection.exporter import export_results_json
 from BackEnd.app.object_detection.postprocess import clip_detections, nms
@@ -14,18 +21,8 @@ from BackEnd.app.object_detection.schemas import FrameDetectionResult
 from BackEnd.app.object_detection.utils import default_frame_id, iter_chunks, scan_keyframes
 from BackEnd.app.object_detection.yolo_detector import YOLODetector
 
-_OBJECT_DETECTION_DIR = os.path.dirname(os.path.abspath(__file__))
-_APP_DIR = os.path.dirname(_OBJECT_DETECTION_DIR)
-_BACKEND_DIR = os.path.dirname(_APP_DIR)
-_PROJECT_DIR = os.path.dirname(_BACKEND_DIR)
-
-KEYFRAMES_DIR = os.path.join(_PROJECT_DIR, "data", "keyframes")
-OUTPUT_PATH = os.path.join(
-    _OBJECT_DETECTION_DIR,
-    "output",
-    "object_detection_results.json",
-)
-CHUNK_SIZE = 100
+KEYFRAMES_DIR = str(OBJECT_DETECTION_KEYFRAMES_DIR)
+OUTPUT_PATH = str(OBJECT_DETECTION_OUTPUT_PATH)
 
 
 def run_detection_on_chunk(
@@ -35,7 +32,7 @@ def run_detection_on_chunk(
     keyframes_dir: str = KEYFRAMES_DIR,
     max_side: int | None = None,
     apply_nms: bool = False,
-    nms_iou_threshold: float = 0.45,
+    nms_iou_threshold: float = OBJECT_DETECTION_NMS_IOU_THRESHOLD,
 ) -> list[FrameDetectionResult]:
     results: list[FrameDetectionResult] = []
 
@@ -73,8 +70,8 @@ def run_detection(
     keyframes_dir: str = KEYFRAMES_DIR,
     output_path: str = OUTPUT_PATH,
     model_path: str = "yolov8n.pt",
-    confidence_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
+    confidence_threshold: float = OBJECT_DETECTION_CONFIDENCE_THRESHOLD,
+    iou_threshold: float = OBJECT_DETECTION_NMS_IOU_THRESHOLD,
     device: str | None = None,
     class_names: list[str] | None = None,
     class_ids: list[str] | None = None,
@@ -127,8 +124,10 @@ def main() -> None:
     parser.add_argument("--keyframes-dir", default=KEYFRAMES_DIR)
     parser.add_argument("--output", default=OUTPUT_PATH)
     parser.add_argument("--model", default="yolov8n.pt")
-    parser.add_argument("--confidence", type=float, default=0.25)
-    parser.add_argument("--iou", type=float, default=0.45)
+    parser.add_argument(
+        "--confidence", type=float, default=OBJECT_DETECTION_CONFIDENCE_THRESHOLD
+    )
+    parser.add_argument("--iou", type=float, default=OBJECT_DETECTION_NMS_IOU_THRESHOLD)
     parser.add_argument("--device", default=None)
     parser.add_argument("--classes", default=None, help="Comma-separated class names.")
     parser.add_argument("--class-ids", default=None, help="Comma-separated ids, e.g. c000,c002.")

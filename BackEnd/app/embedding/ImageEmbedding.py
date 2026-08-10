@@ -3,7 +3,7 @@ from PIL import Image
 from abc import ABC
 from BackEnd.app.contracts.pipeline import FrameMetadata
 import numpy as np
-from BackEnd.app.embedding import CONFIG as cf
+from BackEnd import CONFIG as cf
 
 class ImageEmbedder(BaseEmbedder):
     def get_real_data(self, data: FrameMetadata): 
@@ -44,4 +44,3 @@ class ImageEmbedder(BaseEmbedder):
 
         )
         return embeddings.astype(np.float32)
-        

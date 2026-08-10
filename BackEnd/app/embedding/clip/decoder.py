@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from BackEnd.app.contracts.embedding import DecodedFrameBatch, VideoAsset
-from BackEnd.app.embedding import CONFIG
+from BackEnd import CONFIG
 from BackEnd.app.embedding.common.errors import DecodeError, MediaNotFoundError
 
 
