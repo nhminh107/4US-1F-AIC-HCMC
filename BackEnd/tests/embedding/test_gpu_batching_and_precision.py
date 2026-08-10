@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from BackEnd.app.contracts.embedding import ModelMetadata, VideoAsset
-from BackEnd.app.embedding.models.clip_vit_b32 import ClipViTB32Adapter, _normalize_matrix
+from BackEnd.app.embedding.model_adapters.clip_vit_b32 import ClipViTB32Adapter, _normalize_matrix
 from BackEnd.app.embedding.clip.decoder import PyAVVideoDecoder
 
 

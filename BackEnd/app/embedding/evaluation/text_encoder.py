@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from BackEnd.app.embedding.models.clip_vit_b32 import ClipViTB32Adapter
+from BackEnd.app.embedding.model_adapters.clip_vit_b32 import ClipViTB32Adapter
 
 
 def encode_clip_queries(
