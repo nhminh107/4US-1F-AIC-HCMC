@@ -6,7 +6,12 @@ from collections.abc import Callable
 import gc
 from typing import Any
 
-from BackEnd.CONFIG import PIPELINE_MAX_OOM_RETRIES, PIPELINE_PARALLEL_MODE
+from BackEnd.CONFIG import (
+    CLIP_DIMENSION,
+    CLIP_MODEL,
+    PIPELINE_MAX_OOM_RETRIES,
+    PIPELINE_PARALLEL_MODE,
+)
 from BackEnd.app.clip_extractor import ClipExtractor
 from BackEnd.app.contracts.pipeline import VideoMetadata
 from BackEnd.app.database.faiss_db import FAISS_Manager
@@ -230,4 +235,28 @@ def _release_stage_resource(resource: Any) -> None:
         torch.cuda.empty_cache()
 
 
+def main() -> None:
+    """Run the complete pipeline for every video stored in PostgreSQL."""
+
+    db = PostgreManager()
+    try:
+        faiss = FAISS_Manager(
+            img_dim=CLIP_DIMENSION,
+            clip_dim=CLIP_DIMENSION,
+            shot_dim=CLIP_DIMENSION,
+            model_name=CLIP_MODEL,
+            data_path="artifacts/faiss",
+            load_existing=True,
+        )
+        videos = db.get_list_video()
+        Pipeline(db=db, faiss=faiss, videos=videos).run()
+        print(f"Pipeline completed for all {len(videos)} video(s).")
+    finally:
+        db.engine.dispose()
+
+
 __all__ = ["Pipeline"]
+
+
+if __name__ == "__main__":
+    main()

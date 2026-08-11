@@ -13,9 +13,17 @@ KEEP_ARCHIVES=false
 OVERWRITE=false
 DOWNLOAD_ONLY=false
 EXTRACT_ONLY=false
+VERIFY_ONLY=false
 ONLY_GROUPS=""
 DOWNLOAD_JOBS=1
 CONNECTIONS_PER_ARCHIVE=16
+
+EXPECTED_VIDEO_COUNT=873
+EXPECTED_KEYFRAME_COUNT=177321
+EXPECTED_MAP_COUNT=873
+EXPECTED_METADATA_COUNT=873
+EXPECTED_FEATURE_COUNT=873
+EXPECTED_OBJECT_COUNT=177321
 
 readonly -a ARCHIVES=(
   "keyframes|Keyframes_L21.zip|https://aic-data.ledo.io.vn/Keyframes_L21.zip"
@@ -69,10 +77,13 @@ Options:
   --overwrite          Replace files already present in the target data directory.
   --download-only      Download and validate ZIPs; do not extract them.
   --extract-only       Extract archives already present in --download-dir.
+  --verify-only        Validate the complete extracted dataset; do not download.
   -h, --help           Show this message.
 
 By default existing data files are preserved, verified ZIP archives are removed
-after successful extraction, and incomplete downloads resume via aria2c.
+after successful extraction, and incomplete downloads resume via aria2c. A
+completion marker prevents already extracted archives from being downloaded
+again. A full run validates the final dataset layout and expected file counts.
 EOF
 }
 
@@ -98,13 +109,33 @@ target_for_group() {
     video) printf '%s\n' 'video' ;;
     clip-features-32) printf '%s\n' 'clip-features-32' ;;
     map-keyframes) printf '%s\n' 'map-keyframes' ;;
-    media-info-aic25-b1) printf '%s\n' 'media-info-aic25-b1' ;;
-    objects-aic25-b1) printf '%s\n' 'objects-aic25-b1' ;;
+    media-info-aic25-b1) printf '%s\n' 'media-info-aic25-b1/media-info' ;;
+    objects-aic25-b1) printf '%s\n' 'objects-aic25-b1/objects' ;;
     *)
       echo "Unknown archive group: $1" >&2
       exit 1
       ;;
   esac
+}
+
+payload_leaf_for_group() {
+  case "$1" in
+    keyframes) printf '%s\n' 'keyframes' ;;
+    video) printf '%s\n' 'video' ;;
+    clip-features-32) printf '%s\n' 'clip-features-32' ;;
+    map-keyframes) printf '%s\n' 'map-keyframes' ;;
+    media-info-aic25-b1) printf '%s\n' 'media-info' ;;
+    objects-aic25-b1) printf '%s\n' 'objects' ;;
+    *)
+      echo "Unknown archive group: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+completion_marker() {
+  local filename=$1
+  printf '%s/.completed/%s.complete\n' "${DOWNLOAD_DIR}" "${filename}"
 }
 
 download_archive() {
@@ -138,7 +169,11 @@ download_archive() {
 
 find_payload_root() {
   local extraction_dir=$1
-  local target_name=$2
+  local group=$2
+  local target_name
+  target_name=$(target_for_group "${group}")
+  local payload_leaf
+  payload_leaf=$(payload_leaf_for_group "${group}")
   local direct="${extraction_dir}/${target_name}"
   local found
 
@@ -147,7 +182,7 @@ find_payload_root() {
     return
   fi
 
-  found=$(find "${extraction_dir}" -mindepth 1 -type d -name "${target_name}" -print -quit)
+  found=$(find "${extraction_dir}" -mindepth 1 -type d -name "${payload_leaf}" -print -quit)
   if [[ -n "${found}" ]]; then
     printf '%s\n' "${found}"
     return
@@ -180,7 +215,7 @@ extract_archive() {
   unzip -q "${archive_path}" -d "${extraction_dir}"
 
   local payload_root
-  payload_root=$(find_payload_root "${extraction_dir}" "${target_name}")
+  payload_root=$(find_payload_root "${extraction_dir}" "${group}")
   mkdir -p "${target_dir}"
   if [[ "${OVERWRITE}" == true ]]; then
     rsync -a "${payload_root}/" "${target_dir}/"
@@ -190,6 +225,108 @@ extract_archive() {
 
   rm -rf -- "${extraction_dir}"
   trap - RETURN
+}
+
+count_files() {
+  local root=$1
+  local pattern=$2
+  find "${root}" -type f -name "${pattern}" -print | wc -l
+}
+
+verify_exact_count() {
+  local label=$1
+  local root=$2
+  local pattern=$3
+  local expected=$4
+  local actual=0
+
+  if [[ -d "${root}" ]]; then
+    actual=$(count_files "${root}" "${pattern}")
+  fi
+  printf '%-24s expected=%-8s actual=%s\n' "${label}" "${expected}" "${actual}"
+  [[ "${actual}" -eq "${expected}" ]]
+}
+
+verify_minimum_count() {
+  local label=$1
+  local root=$2
+  local pattern=$3
+  local expected_minimum=$4
+  local actual=0
+
+  if [[ -d "${root}" ]]; then
+    actual=$(count_files "${root}" "${pattern}")
+  fi
+  printf '%-24s expected>=%-6s actual=%s\n' "${label}" "${expected_minimum}" "${actual}"
+  [[ "${actual}" -ge "${expected_minimum}" ]]
+}
+
+write_file_ids() {
+  local root=$1
+  local pattern=$2
+  local output=$3
+  find "${root}" -mindepth 1 -maxdepth 1 -type f -name "${pattern}" -printf '%f\n' \
+    | sed 's/\.[^.]*$//' \
+    | LC_ALL=C sort -u > "${output}"
+}
+
+write_directory_ids() {
+  local root=$1
+  local output=$2
+  find "${root}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+    | LC_ALL=C sort -u > "${output}"
+}
+
+verify_id_set() {
+  local label=$1
+  local expected_file=$2
+  local actual_file=$3
+  local differences
+  differences=$(comm -3 "${expected_file}" "${actual_file}" | sed -n '1,10p')
+  if [[ -n "${differences}" ]]; then
+    echo "${label}: video ID set mismatch (first 10 differences):" >&2
+    echo "${differences}" >&2
+    return 1
+  fi
+  echo "${label}: video ID set matches metadata."
+}
+
+verify_full_dataset() {
+  local failures=0
+  local verification_dir
+  verification_dir=$(mktemp -d "${DOWNLOAD_DIR}/verify.XXXXXX")
+  trap 'rm -rf -- "${verification_dir}"' RETURN
+
+  echo "Validating complete AIC25 B1 dataset under: ${DATA_ROOT}"
+  verify_exact_count "videos (.mp4)" "${DATA_ROOT}/video" "*.mp4" "${EXPECTED_VIDEO_COUNT}" || failures=$((failures + 1))
+  verify_minimum_count "keyframes (.jpg)" "${DATA_ROOT}/keyframes" "*.jpg" "${EXPECTED_KEYFRAME_COUNT}" || failures=$((failures + 1))
+  verify_exact_count "keyframe maps (.csv)" "${DATA_ROOT}/map-keyframes" "*.csv" "${EXPECTED_MAP_COUNT}" || failures=$((failures + 1))
+  verify_exact_count "metadata (.json)" "${DATA_ROOT}/media-info-aic25-b1/media-info" "*.json" "${EXPECTED_METADATA_COUNT}" || failures=$((failures + 1))
+  verify_exact_count "CLIP features (.npy)" "${DATA_ROOT}/clip-features-32" "*.npy" "${EXPECTED_FEATURE_COUNT}" || failures=$((failures + 1))
+  verify_exact_count "object files (.json)" "${DATA_ROOT}/objects-aic25-b1/objects" "*.json" "${EXPECTED_OBJECT_COUNT}" || failures=$((failures + 1))
+
+  if [[ "${failures}" -eq 0 ]]; then
+    write_file_ids "${DATA_ROOT}/media-info-aic25-b1/media-info" "*.json" "${verification_dir}/metadata.ids"
+    write_file_ids "${DATA_ROOT}/video" "*.mp4" "${verification_dir}/video.ids"
+    write_file_ids "${DATA_ROOT}/map-keyframes" "*.csv" "${verification_dir}/map.ids"
+    write_file_ids "${DATA_ROOT}/clip-features-32" "*.npy" "${verification_dir}/features.ids"
+    write_directory_ids "${DATA_ROOT}/keyframes" "${verification_dir}/keyframes.ids"
+    write_directory_ids "${DATA_ROOT}/objects-aic25-b1/objects" "${verification_dir}/objects.ids"
+
+    verify_id_set "videos" "${verification_dir}/metadata.ids" "${verification_dir}/video.ids" || failures=$((failures + 1))
+    verify_id_set "keyframe maps" "${verification_dir}/metadata.ids" "${verification_dir}/map.ids" || failures=$((failures + 1))
+    verify_id_set "CLIP features" "${verification_dir}/metadata.ids" "${verification_dir}/features.ids" || failures=$((failures + 1))
+    verify_id_set "keyframe directories" "${verification_dir}/metadata.ids" "${verification_dir}/keyframes.ids" || failures=$((failures + 1))
+    verify_id_set "object directories" "${verification_dir}/metadata.ids" "${verification_dir}/objects.ids" || failures=$((failures + 1))
+  fi
+
+  rm -rf -- "${verification_dir}"
+  trap - RETURN
+  if [[ "${failures}" -ne 0 ]]; then
+    echo "Dataset verification failed with ${failures} problem(s)." >&2
+    return 1
+  fi
+  echo "Dataset verification passed."
 }
 
 download_selected_archives() {
@@ -251,6 +388,10 @@ parse_arguments() {
         EXTRACT_ONLY=true
         shift
         ;;
+      --verify-only)
+        VERIFY_ONLY=true
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -263,6 +404,10 @@ parse_arguments() {
     esac
   done
 
+  if [[ "${VERIFY_ONLY}" == true && ("${DOWNLOAD_ONLY}" == true || "${EXTRACT_ONLY}" == true) ]]; then
+    echo "--verify-only cannot be combined with download/extract modes." >&2
+    exit 2
+  fi
   if [[ "${DOWNLOAD_ONLY}" == true && "${EXTRACT_ONLY}" == true ]]; then
     echo "--download-only and --extract-only cannot be used together." >&2
     exit 2
@@ -279,23 +424,43 @@ parse_arguments() {
 
 main() {
   parse_arguments "$@"
+  require_command find
+  require_command sort
+  require_command comm
+  require_command sed
+  require_command wc
+
+  mkdir -p "${DATA_ROOT}" "${DOWNLOAD_DIR}" "${DOWNLOAD_DIR}/.completed"
+  if [[ "${VERIFY_ONLY}" == true ]]; then
+    verify_full_dataset
+    exit 0
+  fi
+
   require_command aria2c
   require_command unzip
   require_command rsync
-  require_command find
 
-  mkdir -p "${DATA_ROOT}" "${DOWNLOAD_DIR}"
   local -a selected_entries=()
-  local entry group filename url archive_path
+  local entry group filename url archive_path marker_path
   for entry in "${ARCHIVES[@]}"; do
     IFS='|' read -r group filename url <<< "${entry}"
     group_is_selected "${group}" || continue
+    marker_path=$(completion_marker "${filename}")
+    if [[ "${DOWNLOAD_ONLY}" == false && "${EXTRACT_ONLY}" == false && "${OVERWRITE}" == false && -f "${marker_path}" ]]; then
+      echo "Skipping completed archive: ${filename}"
+      continue
+    fi
     selected_entries+=("${entry}")
   done
 
   if [[ ${#selected_entries[@]} -eq 0 ]]; then
-    echo "No archive groups selected. Check --only." >&2
-    exit 2
+    if [[ -z "${ONLY_GROUPS}" ]]; then
+      echo "All archives have completion markers; validating extracted data."
+      verify_full_dataset
+      exit 0
+    fi
+    echo "No pending archives for the selected groups."
+    exit 0
   fi
 
   local start
@@ -317,6 +482,9 @@ main() {
 
       if [[ "${DOWNLOAD_ONLY}" == false ]]; then
         extract_archive "${archive_path}" "${group}"
+        marker_path=$(completion_marker "${filename}")
+        printf 'archive=%s\nurl=%s\ncompleted_at=%s\n' \
+          "${filename}" "${url}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${marker_path}"
         if [[ "${KEEP_ARCHIVES}" == false ]]; then
           rm -- "${archive_path}"
         fi
@@ -325,6 +493,9 @@ main() {
   done
 
   echo "Completed ${#selected_entries[@]} archive(s)."
+  if [[ -z "${ONLY_GROUPS}" && "${DOWNLOAD_ONLY}" == false ]]; then
+    verify_full_dataset
+  fi
 }
 
 main "$@"
