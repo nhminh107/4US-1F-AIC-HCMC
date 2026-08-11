@@ -1,48 +1,70 @@
 # Object Tracking
 
-Module tracking nhận một video và toàn bộ shot của video đó. Video chỉ được
-decode một lần; tracker được reset khi chuyển sang shot mới.
+Tracking chạy YOLO26 + ByteTrack độc lập với module Object Detection. Video
+được decode đúng một lần, lấy mẫu theo `sampling_fps`, và tracker được reset ở
+mỗi ranh giới shot.
 
-## Hàm sử dụng trong pipeline
+## Cấu hình
+
+Weight mặc định được tìm tại:
+
+```text
+data/models/yolo26n.pt
+```
+
+Pipeline không tự tải weight. Có thể truyền đường dẫn weight YOLO26 khác:
 
 ```python
-from BackEnd.app.tracking import ByteTrackService, TrackingConfig
+from pathlib import Path
 
-tracker = ByteTrackService(
-    detector=detector,
-    config=TrackingConfig(sampling_fps=2.0),
+from BackEnd.app.tracking import TrackingConfig, YOLOTrackingService
+
+tracker = YOLOTrackingService(
+    config=TrackingConfig(
+        model_path=Path("/models/yolo26s.pt"),
+        sampling_fps=2.0,
+        device="cuda:0",
+    )
 )
+```
 
+Model phải có đúng COCO 80 class theo thứ tự chuẩn. Tracking map từng class sang
+Open Images MID bằng mapping version `coco80-openimages-v1`.
+
+Mặc định YOLO chỉ tracking 22 class có giá trị temporal cao: người, phương
+tiện, một số động vật, vật mang theo và dụng cụ thể thao. Có thể thay đổi bằng
+`TrackingConfig(class_indices=(...))`. Object Detection vẫn hoạt động độc lập
+và không bị giới hạn bởi cấu hình này.
+
+## Input và output
+
+```python
 result = tracker.track_video(
     video=video_metadata,
     shots=shot_metadata_list,
 )
+
+result.tracks        # list[ObjectTrackResult]
+result.observations  # list[TrackObservationResult]
 ```
 
-Input:
-
-- `video_metadata`: `VideoMetadata`, cần có `video_path`.
-- `shot_metadata_list`: `list[ShotMetadata]` của cùng `video_id`.
-
-Output là `TrackingBatchResult` trong RAM:
-
-```python
-result.detections     # list[ObjectDetectionResult]
-result.tracks         # list[ObjectTrackResult]
-result.observations   # list[TrackObservationResult]
-```
-
-## Cách hoạt động
+`TrackObservationResult` lưu trực tiếp timestamp, frame index, normalized bbox
+và confidence từ YOLO. Nó không có `detection_id` và không tham chiếu
+`ObjectDetection`.
 
 ```text
 VideoMetadata + list[ShotMetadata]
-    -> PyAV decode video một lần
+    -> PyAV decode một lần
     -> sample frame theo sampling_fps
-    -> detector trả ObjectDetectionResult
-    -> ByteTrack gán tracker ID
-    -> track summaries và observations
+    -> YOLO26 detect + ByteTrack associate
+    -> map COCO class sang Open Images class
+    -> ObjectTrack summaries + TrackObservation trajectory
 ```
 
-ByteTrack chạy riêng theo từng `class_id` để không nối nhầm class khác nhau.
-Khi sang shot mới, tracker state được reset. Các `detection_id` và `track_id`
-trong kết quả là ID tạm trong batch; cần remap sang ID database khi persist.
+## Lưu ý vận hành
+
+- `persist=True` chỉ được dùng giữa các frame thuộc cùng shot.
+- Tracker state phải reset khi đổi shot hoặc video.
+- `track_buffer` trong `bytetrack.yaml` được tính theo số frame đã sample.
+- Benchmark 2 FPS và 5 FPS trước khi xử lý toàn bộ dataset.
+- Không so sánh trực tiếp confidence YOLO với confidence Faster R-CNN.

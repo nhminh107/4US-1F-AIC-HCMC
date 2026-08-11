@@ -140,7 +140,7 @@ def object_track_result_from_object_track(
 def track_observation_result_from_observation(
     observation: TrackObservation,
 ) -> TrackObservationResult:
-    """Convert a database track observation into a pipeline result."""
+    """Convert an independent YOLO observation into a pipeline result."""
 
     return _contract_from_model(TrackObservationResult, observation)
 

@@ -226,9 +226,6 @@ class ObjectDetection(Base):
 
     frame: Mapped[Frame] = relationship(back_populates="object_detections")
     object_class: Mapped[ClassID] = relationship(back_populates="object_detections")
-    track_observation: Mapped[TrackObservation | None] = relationship(
-        back_populates="detection", uselist=False
-    )
 
 
 class FrameEmbeddingRecord(Base):
@@ -281,6 +278,7 @@ class ObjectTrack(Base):
         CheckConstraint("end_frame_idx >= start_frame_idx"),
         CheckConstraint("observation_count > 0"),
         CheckConstraint("avg_confidence BETWEEN 0 AND 1"),
+        CheckConstraint("sampling_fps > 0"),
     )
 
     track_id: Mapped[int] = mapped_column(
@@ -298,8 +296,12 @@ class ObjectTrack(Base):
     end_frame_idx: Mapped[int | None] = mapped_column(BigInteger)
     observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
     avg_confidence: Mapped[float | None] = mapped_column(Float)
-    tracker_name: Mapped[str | None] = mapped_column(String(100))
-    tracker_version: Mapped[str | None] = mapped_column(String(50))
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    tracker_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    tracker_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    sampling_fps: Mapped[float] = mapped_column(Float, nullable=False)
+    mapping_version: Mapped[str] = mapped_column(String(50), nullable=False)
 
     shot: Mapped[Shot] = relationship(back_populates="object_tracks")
     object_class: Mapped[ClassID] = relationship(back_populates="object_tracks")
@@ -309,24 +311,33 @@ class ObjectTrack(Base):
 
 
 class TrackObservation(Base):
-    """Association between an object track and one of its detections."""
+    """One normalized YOLO observation belonging to an object track."""
 
     __tablename__ = "trackobservation"
-    __table_args__ = (UniqueConstraint("detection_id"),)
+    __table_args__ = (
+        CheckConstraint("frame_idx >= 0"),
+        CheckConstraint("timestamp_ms >= 0"),
+        CheckConstraint("confidence BETWEEN 0 AND 1"),
+        CheckConstraint("x_min BETWEEN 0 AND 1"),
+        CheckConstraint("x_max BETWEEN 0 AND 1"),
+        CheckConstraint("y_min BETWEEN 0 AND 1"),
+        CheckConstraint("y_max BETWEEN 0 AND 1"),
+        CheckConstraint("x_min < x_max"),
+        CheckConstraint("y_min < y_max"),
+    )
 
     track_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("objecttrack.track_id"), primary_key=True
     )
-    detection_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("objectdetection.detection_id"),
-        primary_key=True,
-    )
+    frame_idx: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    x_min: Mapped[float] = mapped_column(Float, nullable=False)
+    x_max: Mapped[float] = mapped_column(Float, nullable=False)
+    y_min: Mapped[float] = mapped_column(Float, nullable=False)
+    y_max: Mapped[float] = mapped_column(Float, nullable=False)
 
     track: Mapped[ObjectTrack] = relationship(back_populates="observations")
-    detection: Mapped[ObjectDetection] = relationship(
-        back_populates="track_observation"
-    )
 
 
 class ClipWindow(Base):

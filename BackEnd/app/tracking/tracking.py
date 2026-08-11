@@ -1,40 +1,33 @@
-"""Track objects across every shot while decoding a video only once."""
+"""Track COCO objects with YOLO26 while decoding each video only once."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from importlib.metadata import version
-import logging
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Any, Iterable, Iterator
 
 import av
 import numpy as np
-import supervision as sv
-from trackers import ByteTrackTracker
 
+from BackEnd.CONFIG import PROJECT_ROOT, TrackingConfig
 from BackEnd.app.contracts.pipeline import (
-    FrameMetadata,
-    ObjectDetectionResult,
     ObjectTrackResult,
     ShotMetadata,
     TrackObservationResult,
     VideoMetadata,
 )
-from BackEnd.app.object_detection.detector import Detector
-from BackEnd.app.object_detection.openimages_jsonl import detect_image_array
-from BackEnd.app.object_detection.preprocess import load_image
-from BackEnd.app.object_detection.tfhub_openimages_detector import TFHubOpenImagesDetector
-from BackEnd.CONFIG import PROJECT_ROOT, TrackingConfig
-
-logger = logging.getLogger(__name__)
+from BackEnd.app.tracking.class_mapping import (
+    COCO_TO_OPENIMAGES,
+    get_canonical_class,
+    validate_coco_names,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class TrackingBatchResult:
-    """In-memory contracts whose integer IDs are local to this batch."""
+    """Track summaries and independent YOLO observations for one video."""
 
-    detections: list[ObjectDetectionResult]
     tracks: list[ObjectTrackResult]
     observations: list[TrackObservationResult]
 
@@ -60,6 +53,7 @@ class _TrackAccumulator:
 
 def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, np.ndarray]]:
     """Yield ``(timestamp_ms, frame_idx, BGR image)`` in decode order."""
+
     with av.open(str(video_path)) as container:
         stream = container.streams.video[0]
         average_rate = float(stream.average_rate) if stream.average_rate else 30.0
@@ -71,62 +65,101 @@ def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, np.ndarray]
             yield timestamp_ms, decoded_index, frame.to_ndarray(format="bgr24")
 
 
-class ByteTrackService:
-    """Decode one video once and reset class-aware ByteTrack state per shot."""
+def _as_numpy(value: Any) -> np.ndarray:
+    """Convert a tensor-like Ultralytics output to a NumPy array."""
+
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    return np.asarray(value)
+
+
+class YOLOTrackingService:
+    """Run YOLO26 detection and ByteTrack association independently per shot."""
+
+    model_name = "YOLO26"
+    tracker_name = "ByteTrack"
 
     def __init__(
         self,
         *,
-        detector: Detector | None = None,
         config: TrackingConfig | None = None,
+        model: Any | None = None,
     ) -> None:
-        self.detector = detector or TFHubOpenImagesDetector(confidence_threshold=0.10)
         self.config = config or TrackingConfig()
-        self.tracker_version = version("trackers")
-
-    def _new_tracker(self) -> ByteTrackTracker:
-        return ByteTrackTracker(
-            lost_track_buffer=self.config.lost_track_buffer,
-            frame_rate=self.config.sampling_fps,
-            track_activation_threshold=self.config.track_activation_threshold,
-            minimum_consecutive_frames=1,
-            minimum_iou_threshold=self.config.minimum_iou_threshold,
-            high_conf_det_threshold=self.config.high_confidence_threshold,
+        self.model_path = self._resolve_project_path(self.config.model_path)
+        self.tracker_config_path = self._resolve_project_path(
+            self.config.tracker_config_path
         )
+
+        if not self.tracker_config_path.is_file():
+            raise FileNotFoundError(
+                f"ByteTrack configuration does not exist: {self.tracker_config_path}"
+            )
+
+        if model is None:
+            if not self.model_path.is_file():
+                raise FileNotFoundError(
+                    "YOLO26 weight does not exist locally: "
+                    f"{self.model_path}. Provide TrackingConfig.model_path; "
+                    "automatic model download is disabled."
+                )
+            try:
+                from ultralytics import YOLO
+            except ImportError as error:
+                raise ImportError(
+                    "ultralytics is required for YOLO26 tracking. The dependency "
+                    "must be installed from the project requirements."
+                ) from error
+            model = YOLO(str(self.model_path))
+
+        self.model = model
+        model_names = getattr(self.model, "names", None)
+        if not isinstance(model_names, (dict, list)):
+            raise ValueError("YOLO model must expose its class names through model.names.")
+        validate_coco_names(model_names)
+
+        self.model_version = self.model_path.name
+        self.tracker_version = version("ultralytics")
+
+    @staticmethod
+    def _resolve_project_path(path: Path) -> Path:
+        resolved = Path(path)
+        return resolved if resolved.is_absolute() else PROJECT_ROOT / resolved
 
     def track_video(
         self,
         video: VideoMetadata,
         shots: Iterable[ShotMetadata],
-        frames: Iterable[FrameMetadata] = (),
     ) -> TrackingBatchResult:
+        """Track sampled video frames and reset tracker state at every shot."""
+
         video_path = Path(video.video_path)
+        if not video_path.is_absolute():
+            video_path = PROJECT_ROOT / video_path
         if not video_path.is_file():
             raise FileNotFoundError(f"Video does not exist: {video_path}")
 
         ordered_shots = sorted(shots, key=lambda item: item.start_ms)
         self._validate_shots(video.video_id, ordered_shots)
         if not ordered_shots:
-            return TrackingBatchResult([], [], [])
+            return TrackingBatchResult([], [])
 
-        persisted_events = _load_persisted_frame_events(video.video_id, frames)
-        persisted_positions = {
-            (timestamp_ms, frame_idx)
-            for timestamp_ms, frame_idx, _, _ in persisted_events
-        }
-        detections: list[ObjectDetectionResult] = []
+        self._reset_tracker_state()
         observations: list[TrackObservationResult] = []
         accumulators: dict[int, _TrackAccumulator] = {}
-        tracker_ids: dict[tuple[str, str, int], int] = {}
-        next_track_id = 1
+        local_track_ids: dict[tuple[str, str, int], int] = {}
+        next_local_track_id = 1
         shot_index = 0
         active_shot_id: str | None = None
-        class_trackers: dict[str, ByteTrackTracker] = {}
         next_sample_ms = ordered_shots[0].start_ms
         sample_interval_ms = 1_000 / self.config.sampling_fps
 
         def advance_to_shot(timestamp_ms: int) -> ShotMetadata | None:
-            nonlocal shot_index, active_shot_id, class_trackers, next_sample_ms
+            nonlocal shot_index, active_shot_id, next_sample_ms
 
             while (
                 shot_index < len(ordered_shots)
@@ -134,7 +167,6 @@ class ByteTrackService:
             ):
                 shot_index += 1
                 active_shot_id = None
-                class_trackers = {}
                 if shot_index < len(ordered_shots):
                     next_sample_ms = ordered_shots[shot_index].start_ms
 
@@ -146,125 +178,170 @@ class ByteTrackService:
                 return None
 
             if active_shot_id != shot.shot_id:
+                self._reset_tracker_state()
                 active_shot_id = shot.shot_id
-                class_trackers = {}
             return shot
 
-        def process_frame(
-            timestamp_ms: int,
-            frame_idx: int,
-            image: np.ndarray,
-            frame_id: str,
-        ) -> None:
-            nonlocal next_track_id
-
+        for timestamp_ms, frame_idx, image in _iter_video_frames(video_path):
             shot = advance_to_shot(timestamp_ms)
             if shot is None:
-                return
-
-            height, width = image.shape[:2]
-            frame_detections = detect_image_array(
-                image,
-                frame_id=frame_id,
-                detector=self.detector,
-            )
-            frame_detections = [
-                replace(item, detection_id=len(detections) + offset + 1)
-                for offset, item in enumerate(frame_detections)
-            ]
-            detection_start = len(detections)
-            detections.extend(frame_detections)
-
-            grouped_indices: dict[str, list[int]] = {}
-            for local_index, detection in enumerate(frame_detections):
-                grouped_indices.setdefault(detection.class_id, []).append(local_index)
-
-            for class_id, local_indices in grouped_indices.items():
-                tracker = class_trackers.get(class_id)
-                if tracker is None:
-                    tracker = self._new_tracker()
-                    class_trackers[class_id] = tracker
-                tracker_input = self._to_tracker_input(
-                    frame_detections,
-                    local_indices,
-                    width=width,
-                    height=height,
-                )
-                tracked = tracker.update(
-                    tracker_input,
-                    timestamp=timestamp_ms / 1_000,
-                )
-
-                for row_index, internal_track_id in enumerate(tracked.tracker_id):
-                    if internal_track_id < 0:
-                        continue
-                    local_index = int(tracked.data["local_index"][row_index])
-                    detection = frame_detections[local_index]
-                    key = (shot.shot_id, class_id, int(internal_track_id))
-                    if key not in tracker_ids:
-                        tracker_ids[key] = next_track_id
-                        accumulators[next_track_id] = _TrackAccumulator(
-                            track_id=next_track_id,
-                            shot_id=shot.shot_id,
-                            class_id=class_id,
-                            start_ms=timestamp_ms,
-                            end_ms=timestamp_ms,
-                            start_frame_idx=frame_idx,
-                            end_frame_idx=frame_idx,
-                        )
-                        next_track_id += 1
-
-                    track_id = tracker_ids[key]
-                    accumulators[track_id].add(
-                        timestamp_ms,
-                        frame_idx,
-                        detection.confidence,
-                    )
-                    observations.append(
-                        TrackObservationResult(
-                            track_id=track_id,
-                            detection_id=detection_start + local_index + 1,
-                        )
-                    )
-
-        persisted_index = 0
-        for timestamp_ms, frame_idx, image in _iter_video_frames(video_path):
-            while (
-                persisted_index < len(persisted_events)
-                and persisted_events[persisted_index][0] <= timestamp_ms
-            ):
-                persisted_timestamp_ms, persisted_frame_idx, persisted_image, persisted_frame_id = (
-                    persisted_events[persisted_index]
-                )
-                process_frame(
-                    persisted_timestamp_ms,
-                    persisted_frame_idx,
-                    persisted_image,
-                    persisted_frame_id,
-                )
-                persisted_index += 1
-
-            if advance_to_shot(timestamp_ms) is None or timestamp_ms < next_sample_ms:
+                if shot_index >= len(ordered_shots):
+                    break
                 continue
+            if timestamp_ms < next_sample_ms:
+                continue
+
             while next_sample_ms <= timestamp_ms:
                 next_sample_ms += sample_interval_ms
-            if (timestamp_ms, frame_idx) not in persisted_positions:
-                process_frame(
+
+            tracked_boxes = self._track_frame(image)
+            image_height, image_width = image.shape[:2]
+            for internal_track_id, coco_index, confidence, xyxy in tracked_boxes:
+                normalized_box = self._normalize_box(
+                    xyxy,
+                    width=image_width,
+                    height=image_height,
+                )
+                if normalized_box is None:
+                    continue
+
+                canonical_class = get_canonical_class(coco_index)
+                key = (
+                    shot.shot_id,
+                    canonical_class.class_id,
+                    internal_track_id,
+                )
+                if key not in local_track_ids:
+                    local_track_ids[key] = next_local_track_id
+                    accumulators[next_local_track_id] = _TrackAccumulator(
+                        track_id=next_local_track_id,
+                        shot_id=shot.shot_id,
+                        class_id=canonical_class.class_id,
+                        start_ms=timestamp_ms,
+                        end_ms=timestamp_ms,
+                        start_frame_idx=frame_idx,
+                        end_frame_idx=frame_idx,
+                    )
+                    next_local_track_id += 1
+
+                local_track_id = local_track_ids[key]
+                accumulators[local_track_id].add(
                     timestamp_ms,
                     frame_idx,
-                    image,
-                    _tracking_frame_id(video.video_id, frame_idx),
+                    confidence,
+                )
+                x_min, y_min, x_max, y_max = normalized_box
+                observations.append(
+                    TrackObservationResult(
+                        track_id=local_track_id,
+                        frame_idx=frame_idx,
+                        timestamp_ms=timestamp_ms,
+                        confidence=confidence,
+                        x_min=x_min,
+                        x_max=x_max,
+                        y_min=y_min,
+                        y_max=y_max,
+                    )
                 )
 
-        for timestamp_ms, frame_idx, image, frame_id in persisted_events[persisted_index:]:
-            process_frame(timestamp_ms, frame_idx, image, frame_id)
+        tracks = [
+            self._to_track_contract(accumulator)
+            for accumulator in accumulators.values()
+            if accumulator.observation_count > 0
+        ]
+        retained_track_ids = {track.track_id for track in tracks}
+        retained_observations = [
+            observation
+            for observation in observations
+            if observation.track_id in retained_track_ids
+        ]
+        return TrackingBatchResult(tracks, retained_observations)
 
-        tracks = [self._to_track_contract(item) for item in accumulators.values()]
-        return TrackingBatchResult(
-            detections,
-            tracks,
-            observations,
-        )
+    def _track_frame(
+        self,
+        image: np.ndarray,
+    ) -> list[tuple[int, int, float, np.ndarray]]:
+        kwargs: dict[str, Any] = {
+            "source": image,
+            "persist": True,
+            "tracker": str(self.tracker_config_path),
+            "conf": self.config.confidence_threshold,
+            "iou": self.config.iou_threshold,
+            "max_det": self.config.max_detections,
+            "classes": list(self.config.class_indices),
+            "verbose": False,
+        }
+        if self.config.device is not None:
+            kwargs["device"] = self.config.device
+
+        results = self.model.track(**kwargs)
+        if not results:
+            return []
+
+        boxes = getattr(results[0], "boxes", None)
+        if boxes is None or not bool(getattr(boxes, "is_track", False)):
+            return []
+
+        track_ids_value = getattr(boxes, "id", None)
+        if track_ids_value is None:
+            return []
+
+        track_ids = _as_numpy(track_ids_value).reshape(-1)
+        class_indices = _as_numpy(boxes.cls).reshape(-1)
+        confidences = _as_numpy(boxes.conf).reshape(-1)
+        boxes_xyxy = _as_numpy(boxes.xyxy).reshape(-1, 4)
+        lengths = {
+            len(track_ids),
+            len(class_indices),
+            len(confidences),
+            len(boxes_xyxy),
+        }
+        if len(lengths) != 1:
+            raise ValueError("YOLO tracking output arrays have inconsistent lengths.")
+
+        return [
+            (
+                int(track_id),
+                int(class_index),
+                float(confidence),
+                np.asarray(xyxy, dtype=np.float32),
+            )
+            for track_id, class_index, confidence, xyxy in zip(
+                track_ids,
+                class_indices,
+                confidences,
+                boxes_xyxy,
+            )
+            if int(track_id) >= 0
+        ]
+
+    def _reset_tracker_state(self) -> None:
+        """Reset any Ultralytics trackers already attached to this model."""
+
+        predictor = getattr(self.model, "predictor", None)
+        trackers = getattr(predictor, "trackers", ()) if predictor is not None else ()
+        for tracker in trackers or ():
+            reset = getattr(tracker, "reset", None)
+            if not callable(reset):
+                raise RuntimeError("Ultralytics tracker does not expose reset().")
+            reset()
+
+    @staticmethod
+    def _normalize_box(
+        xyxy: np.ndarray,
+        *,
+        width: int,
+        height: int,
+    ) -> tuple[float, float, float, float] | None:
+        if width <= 0 or height <= 0:
+            raise ValueError("Tracking images must have positive dimensions.")
+        x_min = min(max(float(xyxy[0]) / width, 0.0), 1.0)
+        y_min = min(max(float(xyxy[1]) / height, 0.0), 1.0)
+        x_max = min(max(float(xyxy[2]) / width, 0.0), 1.0)
+        y_max = min(max(float(xyxy[3]) / height, 0.0), 1.0)
+        if x_min >= x_max or y_min >= y_max:
+            return None
+        return x_min, y_min, x_max, y_max
 
     @staticmethod
     def _validate_shots(video_id: str, shots: list[ShotMetadata]) -> None:
@@ -278,36 +355,6 @@ class ByteTrackService:
                 raise ValueError("Shots must not overlap.")
             previous_end = shot.end_ms
 
-    @staticmethod
-    def _to_tracker_input(
-        detections: list[ObjectDetectionResult],
-        indices: list[int],
-        *,
-        width: int,
-        height: int,
-    ) -> sv.Detections:
-        xyxy = np.asarray(
-            [
-                [
-                    detections[index].x_min * width,
-                    detections[index].y_min * height,
-                    detections[index].x_max * width,
-                    detections[index].y_max * height,
-                ]
-                for index in indices
-            ],
-            dtype=np.float32,
-        )
-        confidence = np.asarray(
-            [detections[index].confidence for index in indices],
-            dtype=np.float32,
-        )
-        return sv.Detections(
-            xyxy=xyxy,
-            confidence=confidence,
-            data={"local_index": np.asarray(indices, dtype=np.int64)},
-        )
-
     def _to_track_contract(self, item: _TrackAccumulator) -> ObjectTrackResult:
         return ObjectTrackResult(
             shot_id=item.shot_id,
@@ -315,45 +362,27 @@ class ByteTrackService:
             start_ms=item.start_ms,
             end_ms=max(item.end_ms, item.start_ms + 1),
             observation_count=item.observation_count,
+            model_name=self.model_name,
+            model_version=self.model_version,
+            tracker_name=self.tracker_name,
+            tracker_version=self.tracker_version,
+            sampling_fps=self.config.sampling_fps,
+            mapping_version=self.config.mapping_version,
             start_frame_idx=item.start_frame_idx,
             end_frame_idx=item.end_frame_idx,
             avg_confidence=item.confidence_sum / item.observation_count,
-            tracker_name="ByteTrack",
-            tracker_version=self.tracker_version,
             track_id=item.track_id,
         )
 
 
-def _tracking_frame_id(video_id: str, frame_idx: int) -> str:
-    """Create a deterministic tracking-sample ID within ``frame_id varchar(15)``."""
-
-    frame_id = f"{video_id}T{frame_idx:06d}"
-    if len(frame_id) > 15:
-        raise ValueError(f"Tracking frame ID exceeds varchar(15): {frame_id}.")
-    return frame_id
+# Preserve existing imports while changing the implementation to YOLO26.
+ByteTrackService = YOLOTrackingService
+Tracker = YOLOTrackingService
 
 
-def _load_persisted_frame_events(
-    video_id: str,
-    frames: Iterable[FrameMetadata],
-) -> list[tuple[int, int, np.ndarray, str]]:
-    """Load available DB frames once for tracking, without creating new frames."""
-
-    events: list[tuple[int, int, np.ndarray, str]] = []
-    for frame in frames:
-        if frame.video_id != video_id or frame.frame_path is None:
-            continue
-        frame_path = Path(frame.frame_path)
-        if not frame_path.is_absolute():
-            frame_path = PROJECT_ROOT / frame_path
-        if not frame_path.is_file():
-            logger.warning("Skipping unavailable persisted frame %s: %s", frame.frame_id, frame_path)
-            continue
-        events.append(
-            (frame.timestamp_ms, frame.frame_idx, load_image(str(frame_path)), frame.frame_id)
-        )
-    return sorted(events, key=lambda item: (item[0], item[1], item[3]))
-
-
-# Backward-compatible name for existing imports.
-Tracker = ByteTrackService
+__all__ = [
+    "ByteTrackService",
+    "Tracker",
+    "TrackingBatchResult",
+    "YOLOTrackingService",
+]

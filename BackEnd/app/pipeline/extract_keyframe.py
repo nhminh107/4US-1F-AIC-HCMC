@@ -27,4 +27,4 @@ if __name__ == "__main__":
     db = PostgreManager()
     extractor = KeyframeExtractor()
 
-    extract_keyframes('L21_V005', db, extractor)
+    extract_keyframes('L23_V005', db, extractor)

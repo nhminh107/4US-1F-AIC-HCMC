@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from datetime import date
 from typing import Any, TypeVar
@@ -44,8 +45,10 @@ from BackEnd.app.contracts.pipeline import (
     ClipWindowMetadata,
     FrameEmbeddingMapping,
     FrameMetadata,
+    ObjectTrackResult,
     ShotEmbeddingMapping,
     ShotMetadata,
+    TrackObservationResult,
     VideoMetadata,
 )
 
@@ -327,11 +330,15 @@ class PostgreManager:
         end_ms: int,
         observation_count: int,
         *,
+        model_name: str,
+        model_version: str,
+        tracker_name: str,
+        tracker_version: str,
+        sampling_fps: float,
+        mapping_version: str,
         start_frame_idx: int | None = None,
         end_frame_idx: int | None = None,
         avg_confidence: float | None = None,
-        tracker_name: str | None = None,
-        tracker_version: str | None = None,
     ) -> ObjectTrack:
         """Insert one object track belonging to an existing shot."""
 
@@ -350,29 +357,109 @@ class PostgreManager:
                 end_frame_idx=end_frame_idx,
                 observation_count=observation_count,
                 avg_confidence=avg_confidence,
+                model_name=model_name,
+                model_version=model_version,
                 tracker_name=tracker_name,
                 tracker_version=tracker_version,
+                sampling_fps=sampling_fps,
+                mapping_version=mapping_version,
             )
             return self._persist(session, track)
 
     def add_track_observation(
         self,
         track_id: int,
-        detection_id: int,
+        frame_idx: int,
+        timestamp_ms: int,
+        confidence: float,
+        x_min: float,
+        x_max: float,
+        y_min: float,
+        y_max: float,
     ) -> TrackObservation:
-        """Insert one association between an existing track and detection."""
+        """Insert one normalized observation belonging to an object track."""
 
         with self.session_factory() as session:
             if session.get(ObjectTrack, track_id) is None:
                 raise ValueError(f"ObjectTrack '{track_id}' does not exist.")
-            if session.get(ObjectDetection, detection_id) is None:
-                raise ValueError(f"ObjectDetection '{detection_id}' does not exist.")
 
             observation = TrackObservation(
                 track_id=track_id,
-                detection_id=detection_id,
+                frame_idx=frame_idx,
+                timestamp_ms=timestamp_ms,
+                confidence=confidence,
+                x_min=x_min,
+                x_max=x_max,
+                y_min=y_min,
+                y_max=y_max,
             )
             return self._persist(session, observation)
+
+    def add_tracking_result(
+        self,
+        tracks: list[ObjectTrackResult],
+        observations: list[TrackObservationResult],
+    ) -> list[ObjectTrackResult]:
+        """Insert tracks and their observations in one transaction."""
+
+        if not tracks:
+            if observations:
+                raise ValueError("Tracking observations require at least one track.")
+            return []
+
+        with self.session_factory.begin() as session:
+            track_records = [
+                ObjectTrack(
+                    shot_id=track.shot_id,
+                    class_id=track.class_id,
+                    start_ms=track.start_ms,
+                    end_ms=track.end_ms,
+                    start_frame_idx=track.start_frame_idx,
+                    end_frame_idx=track.end_frame_idx,
+                    observation_count=track.observation_count,
+                    avg_confidence=track.avg_confidence,
+                    model_name=track.model_name,
+                    model_version=track.model_version,
+                    tracker_name=track.tracker_name,
+                    tracker_version=track.tracker_version,
+                    sampling_fps=track.sampling_fps,
+                    mapping_version=track.mapping_version,
+                )
+                for track in tracks
+            ]
+            session.add_all(track_records)
+            session.flush()
+
+            track_id_map: dict[int, int] = {}
+            for track, record in zip(tracks, track_records):
+                if track.track_id is None:
+                    raise ValueError("Tracking result must have a local track_id.")
+                track_id_map[track.track_id] = record.track_id
+
+            try:
+                observation_records = [
+                    TrackObservation(
+                        track_id=track_id_map[observation.track_id],
+                        frame_idx=observation.frame_idx,
+                        timestamp_ms=observation.timestamp_ms,
+                        confidence=observation.confidence,
+                        x_min=observation.x_min,
+                        x_max=observation.x_max,
+                        y_min=observation.y_min,
+                        y_max=observation.y_max,
+                    )
+                    for observation in observations
+                ]
+            except KeyError as exc:
+                raise ValueError(
+                    f"Observation references unknown local track_id: {exc.args[0]}."
+                ) from exc
+            session.add_all(observation_records)
+
+        return [
+            replace(track, track_id=record.track_id)
+            for track, record in zip(tracks, track_records)
+        ]
 
     def add_caption(
         self,

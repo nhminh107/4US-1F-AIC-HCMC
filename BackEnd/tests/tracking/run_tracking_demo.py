@@ -10,7 +10,7 @@ from pathlib import Path
 from BackEnd.app.contracts.pipeline import VideoMetadata
 from BackEnd.app.database.postgre_db import PostgreManager
 from BackEnd.app.pipeline.tracking import track_video
-from BackEnd.app.tracking.tracking import ByteTrackService
+from BackEnd.app.tracking import TrackingConfig, YOLOTrackingService
 
 
 def main() -> None:
@@ -22,6 +22,12 @@ def main() -> None:
         "--video-id",
         help="Video ID already present in PostgreSQL (default: video file stem)",
     )
+    parser.add_argument(
+        "--model",
+        type=Path,
+        default=Path("data/models/yolo26n.pt"),
+        help="Local YOLO26 weight path",
+    )
     args = parser.parse_args()
 
     video_path = args.video_path.resolve()
@@ -32,7 +38,10 @@ def main() -> None:
         video_id=args.video_id or video_path.stem,
         video_path=video_path,
     )
-    tracks = track_video(video, PostgreManager(), ByteTrackService())
+    tracker = YOLOTrackingService(
+        config=TrackingConfig(model_path=args.model),
+    )
+    tracks = track_video(video, PostgreManager(), tracker)
     print(json.dumps([asdict(track) for track in tracks], ensure_ascii=False, indent=2))
 
 

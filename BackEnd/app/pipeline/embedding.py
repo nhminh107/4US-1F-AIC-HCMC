@@ -56,7 +56,11 @@ class EmbeddingPipeline:
         if self.frame_embedder is None:
             self.frame_embedder = ImageEmbedder()
 
-        frames = self.db.get_frame_record_by_video_id(video_id)
+        frames = [
+            frame
+            for frame in self.db.get_frame_record_by_video_id(video_id)
+            if frame.source == "extracted"
+        ]
         if not frames:
             return []
 
@@ -218,53 +222,29 @@ class EmbeddingPipeline:
 
 def embed_frames(
     video_id: str,
-    db: PostgreManager,
-    embedder: ImageEmbedder,
-    faiss_manager: FAISS_Manager,
+    pipeline: EmbeddingPipeline,
 ) -> list[FrameEmbeddingMapping]:
-    """Backward-compatible wrapper for :meth:`EmbeddingPipeline.embed_frames`."""
+    """Embed and persist all frame vectors for one video."""
 
-    return EmbeddingPipeline(
-        db=db,
-        faiss_manager=faiss_manager,
-        frame_embedder=embedder,
-    ).embed_frames(video_id)
+    return pipeline.embed_frames(video_id)
 
 
 def embed_clips(
     video_id: str,
-    db: PostgreManager,
-    clip_service: ClipEmbeddingService,
-    video_repository: VideoRepository,
-    faiss_manager: FAISS_Manager,
+    pipeline: EmbeddingPipeline,
 ) -> list[ClipEmbeddingMapping]:
-    """Backward-compatible wrapper for :meth:`EmbeddingPipeline.embed_clips`."""
+    """Embed and persist all clip vectors for one video."""
 
-    return EmbeddingPipeline(
-        db=db,
-        faiss_manager=faiss_manager,
-        clip_service=clip_service,
-        video_repository=video_repository,
-    ).embed_clips(video_id)
+    return pipeline.embed_clips(video_id)
 
 
-def embed_shot(
+def embed_shots(
     video_id: str,
-    db: PostgreManager,
-    clip_service: ClipEmbeddingService,
-    shot_service: ShotEmbeddingService,
-    video_repository: VideoRepository,
-    faiss_manager: FAISS_Manager,
+    pipeline: EmbeddingPipeline,
 ) -> list[ShotEmbeddingMapping]:
-    """Backward-compatible wrapper for :meth:`EmbeddingPipeline.embed_shot`."""
+    """Aggregate and persist shot vectors for one video."""
 
-    return EmbeddingPipeline(
-        db=db,
-        faiss_manager=faiss_manager,
-        clip_service=clip_service,
-        shot_service=shot_service,
-        video_repository=video_repository,
-    ).embed_shot(video_id)
+    return pipeline.embed_shot(video_id)
 
 
 def _embed_clip_matrix(
@@ -363,7 +343,7 @@ def _successful_records(
     return successful
 
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     db = PostgreManager()
     faiss_manager = FAISS_Manager(
       img_dim=CONFIG.CLIP_DIMENSION,
@@ -377,4 +357,3 @@ if __name__ == "__main__":
     )
 
     pipeline.embed_frames('L21_V005')
-        

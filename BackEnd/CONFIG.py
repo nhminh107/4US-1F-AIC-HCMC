@@ -62,6 +62,8 @@ SHOT_WEIGHTS_PATH = DATA_ROOT / "models" / "transnetv2-pytorch-weights.pth"
 KEYFRAME_OUTPUT_DIR = DATA_ROOT / "keyframes"
 KEYFRAME_MAP_DIR = DATA_ROOT / "map-keyframes"
 ORGANIZER_OBJECT_DIR = DATA_ROOT / "objects-aic25-b1" / "objects"
+AIC25_OBJECT_JSONL_DIR = DATA_ROOT / "objects-aic25-b1-jsonl" / "objects"
+ORGANIZER_CLIP_FEATURE_DIR = DATA_ROOT / "clip-features-32"
 KEYFRAME_TARGET_INTERVAL_MS = 2_500
 KEYFRAME_MIN_FRAME_GAP = 5
 KEYFRAME_MAX_ADDITIONAL_PER_SHOT = 5
@@ -224,17 +226,68 @@ POSTGRES_INSERT_BATCH_SIZE = 1_000
 
 
 # Tracking
+TRACKING_MODEL_PATH = DATA_ROOT / "models" / "yolo26n.pt"
+TRACKING_TRACKER_CONFIG_PATH = (
+    BACKEND_ROOT / "app" / "tracking" / "bytetrack.yaml"
+)
+TRACKING_CLASS_MAPPING_VERSION = "coco80-openimages-v1"
+# Classes with useful temporal behavior for retrieval. Static indoor objects
+# remain available through the independent ObjectDetection pipeline.
+TRACKING_COCO_CLASS_INDICES = (
+    0,  # person
+    1,  # bicycle
+    2,  # car
+    3,  # motorcycle
+    4,  # airplane
+    5,  # bus
+    6,  # train
+    7,  # truck
+    8,  # boat
+    14,  # bird
+    15,  # cat
+    16,  # dog
+    17,  # horse
+    18,  # sheep
+    19,  # cow
+    24,  # backpack
+    25,  # umbrella
+    26,  # handbag
+    28,  # suitcase
+    32,  # sports ball
+    36,  # skateboard
+    37,  # surfboard
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TrackingConfig:
+    model_path: Path = TRACKING_MODEL_PATH
+    tracker_config_path: Path = TRACKING_TRACKER_CONFIG_PATH
+    device: str | None = None
     sampling_fps: float = 2.0
-    track_activation_threshold: float = 0.25
-    high_confidence_threshold: float = 0.35
-    minimum_iou_threshold: float = 0.20
-    lost_track_buffer: int = 30
+    confidence_threshold: float = 0.25
+    iou_threshold: float = 0.70
+    max_detections: int = 300
+    mapping_version: str = TRACKING_CLASS_MAPPING_VERSION
+    class_indices: tuple[int, ...] = TRACKING_COCO_CLASS_INDICES
 
     def __post_init__(self) -> None:
         if self.sampling_fps <= 0:
             raise ValueError("sampling_fps must be positive.")
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ValueError("confidence_threshold must be within [0, 1].")
+        if not 0.0 <= self.iou_threshold <= 1.0:
+            raise ValueError("iou_threshold must be within [0, 1].")
+        if self.max_detections <= 0:
+            raise ValueError("max_detections must be positive.")
+        if not self.mapping_version:
+            raise ValueError("mapping_version must not be empty.")
+        if not self.class_indices:
+            raise ValueError("class_indices must not be empty.")
+        if len(set(self.class_indices)) != len(self.class_indices):
+            raise ValueError("class_indices must not contain duplicates.")
+        if any(index < 0 or index > 79 for index in self.class_indices):
+            raise ValueError("class_indices must contain COCO indices from 0 to 79.")
 
 
 # Embedding

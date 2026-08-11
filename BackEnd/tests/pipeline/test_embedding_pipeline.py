@@ -114,6 +114,16 @@ def _frame(frame_id: str, frame_path: Path | None = None) -> FrameMetadata:
 
 def test_embed_frames_persists_faiss_mappings() -> None:
     frames = [
+        FrameMetadata(
+            frame_id="L21_V005_001",
+            video_id="L21_V005",
+            shot_id=None,
+            timestamp_ms=0,
+            fps=30.0,
+            frame_idx=0,
+            source="official",
+            n=1,
+        ),
         _frame("L21_V005_E001", Path("data/a.jpg")),
         _frame("L21_V005_E002", Path("data/b.jpg")),
     ]
@@ -132,8 +142,8 @@ def test_embed_frames_persists_faiss_mappings() -> None:
         "L21_V005_E001",
         "L21_V005_E002",
     ]
-    assert embedder.received_frames == frames
-    assert faiss_manager.frames == frames
+    assert embedder.received_frames == frames[1:]
+    assert faiss_manager.frames == frames[1:]
     assert database.saved_mappings[0]["faiss_id"] == 1
     assert database.saved_mappings[1]["frame_id"] == "L21_V005_E002"
 

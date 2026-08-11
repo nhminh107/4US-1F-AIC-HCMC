@@ -146,20 +146,84 @@ class ObjectTrackResult:
     start_ms: int
     end_ms: int
     observation_count: int
+    model_name: str
+    model_version: str
+    tracker_name: str
+    tracker_version: str
+    sampling_fps: float
+    mapping_version: str
     start_frame_idx: int | None = None
     end_frame_idx: int | None = None
     avg_confidence: float | None = None
-    tracker_name: str | None = None
-    tracker_version: str | None = None
     track_id: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate a reproducible track summary."""
+
+        if not self.shot_id or not self.class_id:
+            raise ValueError("ObjectTrackResult shot_id and class_id are required.")
+        if self.start_ms < 0 or self.end_ms <= self.start_ms:
+            raise ValueError("ObjectTrackResult must have a positive time range.")
+        if self.observation_count <= 0:
+            raise ValueError("ObjectTrackResult observation_count must be positive.")
+        if self.sampling_fps <= 0:
+            raise ValueError("ObjectTrackResult sampling_fps must be positive.")
+        provenance = (
+            self.model_name,
+            self.model_version,
+            self.tracker_name,
+            self.tracker_version,
+            self.mapping_version,
+        )
+        if any(not value for value in provenance):
+            raise ValueError("ObjectTrackResult provenance fields must not be empty.")
+        if self.start_frame_idx is not None and self.start_frame_idx < 0:
+            raise ValueError("ObjectTrackResult start_frame_idx must be non-negative.")
+        if self.end_frame_idx is not None and self.end_frame_idx < 0:
+            raise ValueError("ObjectTrackResult end_frame_idx must be non-negative.")
+        if (
+            self.start_frame_idx is not None
+            and self.end_frame_idx is not None
+            and self.end_frame_idx < self.start_frame_idx
+        ):
+            raise ValueError("ObjectTrackResult frame range is invalid.")
+        if self.avg_confidence is not None and not 0.0 <= self.avg_confidence <= 1.0:
+            raise ValueError("ObjectTrackResult avg_confidence must be within [0, 1].")
 
 
 @dataclass(frozen=True, slots=True)
 class TrackObservationResult:
-    """Association between a track and a detection."""
+    """One normalized YOLO observation belonging to an object track."""
 
     track_id: int
-    detection_id: int
+    frame_idx: int
+    timestamp_ms: int
+    confidence: float
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+
+    def __post_init__(self) -> None:
+        """Validate one independently persisted tracking observation."""
+
+        if self.track_id <= 0:
+            raise ValueError("TrackObservationResult track_id must be positive.")
+        if self.frame_idx < 0 or self.timestamp_ms < 0:
+            raise ValueError(
+                "TrackObservationResult frame_idx and timestamp_ms must be non-negative."
+            )
+        if not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("TrackObservationResult confidence must be within [0, 1].")
+        coordinates = (self.x_min, self.x_max, self.y_min, self.y_max)
+        if not all(math.isfinite(value) for value in coordinates):
+            raise ValueError("TrackObservationResult coordinates must be finite.")
+        if not all(0.0 <= value <= 1.0 for value in coordinates):
+            raise ValueError(
+                "TrackObservationResult coordinates must be normalized to [0, 1]."
+            )
+        if self.x_min >= self.x_max or self.y_min >= self.y_max:
+            raise ValueError("TrackObservationResult bounding box must have positive area.")
 
 
 @dataclass(frozen=True, slots=True)
