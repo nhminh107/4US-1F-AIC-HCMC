@@ -38,11 +38,18 @@ class EmbeddingPipeline:
     ) -> None:
         self.db = db
         self.faiss_manager = faiss_manager
+        if clip_service is None:
+            shared_adapter = ClipViTB32Adapter()
+            clip_service = ClipEmbeddingService(
+                decoder=PyAVVideoDecoder(),
+                model_adapter=shared_adapter,
+            )
+        else:
+            shared_adapter = getattr(clip_service, "model_adapter", None)
+
+        self.clip_service = clip_service
         self.frame_embedder = frame_embedder
-        self.clip_service = clip_service or ClipEmbeddingService(
-            decoder=PyAVVideoDecoder(),
-            model_adapter=ClipViTB32Adapter(),
-        )
+        self._shared_adapter = shared_adapter
         self.shot_service = shot_service or ShotEmbeddingService()
         self.video_repository = video_repository or VideoRepository()
         self._clip_cache: dict[
@@ -54,7 +61,7 @@ class EmbeddingPipeline:
         """Embed all persisted frames of one video and save their mappings."""
 
         if self.frame_embedder is None:
-            self.frame_embedder = ImageEmbedder()
+            self.frame_embedder = ImageEmbedder(self._shared_adapter)
 
         frames = [
             frame
@@ -87,16 +94,22 @@ class EmbeddingPipeline:
         if not pending_frames:
             return [existing_by_frame[frame.frame_id] for frame in frames]
 
-        embeddings = self.frame_embedder.embed_batch(pending_frames)
-        new_mappings, _, _ = self.faiss_manager.add_and_save(
-            imgs=embeddings,
-            imgs_model=pending_frames,
-        )
-        try:
-            self.db.add_frame_embedding_records(new_mappings)
-        except Exception:
-            self.faiss_manager.rollback(frame_mappings=new_mappings)
-            raise
+        new_mappings: list[FrameEmbeddingMapping] = []
+        for start in range(0, len(pending_frames), CONFIG.EMBEDDING_BATCH_SIZE):
+            frame_batch = pending_frames[
+                start : start + CONFIG.EMBEDDING_BATCH_SIZE
+            ]
+            embeddings = self.frame_embedder.embed_batch(frame_batch)
+            batch_mappings, _, _ = self.faiss_manager.add_and_save(
+                imgs=embeddings,
+                imgs_model=frame_batch,
+            )
+            try:
+                self.db.add_frame_embedding_records(batch_mappings)
+            except Exception:
+                self.faiss_manager.rollback(frame_mappings=batch_mappings)
+                raise
+            new_mappings.extend(batch_mappings)
 
         mappings_by_frame = {
             **existing_by_frame,
@@ -218,6 +231,15 @@ class EmbeddingPipeline:
         )
         self._clip_cache[video_id] = embedded
         return embedded
+
+    def close(self) -> None:
+        """Release cached vectors and the shared CLIP model at stage end."""
+
+        self._clip_cache.clear()
+        self.frame_embedder = None
+        adapter = getattr(self.clip_service, "model_adapter", None)
+        if adapter is not None and hasattr(adapter, "_model"):
+            adapter._model = None
 
 
 def embed_frames(

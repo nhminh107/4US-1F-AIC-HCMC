@@ -27,6 +27,17 @@ GENERAL_BATCH_SIZE = 32
 general_batch_size = GENERAL_BATCH_SIZE
 
 
+# Offline pipeline scheduling. ``auto`` enables two isolated GPU workers only
+# when both PyTorch and PaddleOCR can use CUDA. Set ``parallel`` to require the
+# concurrent mode, or ``sequential`` for deterministic one-stage-at-a-time
+# execution.
+PIPELINE_PARALLEL_MODE = "auto"
+PIPELINE_GPU_HEADROOM_GIB = 8
+PIPELINE_TRACKING_VRAM_BUDGET_GIB = 12
+PIPELINE_OCR_VRAM_BUDGET_GIB = 16
+PIPELINE_MAX_OOM_RETRIES = 2
+
+
 # Video ingestion
 VIDEO_METADATA_DIR = DATA_ROOT / "media-info-aic25-b1" / "media-info"
 VIDEO_DIR = DATA_ROOT / "video"
@@ -131,6 +142,7 @@ DEFAULT_VIETOCR_CONFIG_PATH = (
 )
 OCR_DETECTION_BATCH_SIZE = 4
 OCR_RECOGNITION_BATCH_SIZE = GENERAL_BATCH_SIZE
+OCR_FRAME_CHUNK_SIZE = 32
 OCR_LEGACY_CHUNK_SIZE = 100
 OCR_LEGACY_DETECTION_CONFIDENCE_THRESHOLD = 0.65
 OCR_DEDUP_HAMMING_DISTANCE_THRESHOLD = 4

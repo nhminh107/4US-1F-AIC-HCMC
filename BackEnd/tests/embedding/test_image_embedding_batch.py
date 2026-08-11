@@ -71,3 +71,35 @@ def test_image_embedder_resolves_relative_paths_from_project_root(
     image = embedder.get_real_data(frame)
 
     assert image.size == (4, 3)
+
+
+def test_image_embedder_uses_injected_shared_clip_adapter(tmp_path: Path) -> None:
+    image_path = tmp_path / "frame.jpg"
+    Image.new("RGB", (4, 3), color="white").save(image_path)
+    frame = FrameMetadata(
+        frame_id="L21_V005_E001",
+        video_id="L21_V005",
+        shot_id="L21_V005_S000",
+        timestamp_ms=0,
+        fps=30.0,
+        frame_idx=0,
+        source="extracted",
+        frame_path=image_path,
+    )
+
+    class SharedAdapter:
+        def __init__(self) -> None:
+            self.received_count = 0
+            self.batch_size: int | None = None
+
+        def encode_images(self, images, *, batch_size: int):
+            self.received_count = len(images)
+            self.batch_size = batch_size
+            return np.asarray([[1.0, 0.0]], dtype=np.float32)
+
+    adapter = SharedAdapter()
+    embeddings = ImageEmbedder(adapter).embed_batch([frame])
+
+    assert adapter.received_count == 1
+    assert adapter.batch_size is not None
+    assert embeddings.tolist() == [[1.0, 0.0]]

@@ -4,7 +4,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from BackEnd.app.contracts.pipeline import VideoMetadata
+from BackEnd.app.pipeline import main_pipeline
 from BackEnd.app.pipeline.main_pipeline import Pipeline
+from BackEnd.app.pipeline.parallel_runner import WorkerResult
 
 
 class FakeDatabase:
@@ -100,3 +102,35 @@ def test_embedding_pipeline_is_not_created_until_embedding_stage(tmp_path: Path)
     pipeline.run_embeddings()
 
     assert factory_calls == 1
+
+
+def test_oom_retry_runs_only_unfinished_videos_in_a_fresh_worker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pipeline = Pipeline(
+        db=FakeDatabase([_video("L01_V001", tmp_path / "video.mp4")]),  # type: ignore[arg-type]
+        faiss=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    retried: list[tuple[str, tuple[str, ...], int]] = []
+
+    def retry_worker(kind: str, video_ids: tuple[str, ...], *, ocr_retry_level: int):
+        retried.append((kind, video_ids, ocr_retry_level))
+        return WorkerResult(
+            kind="enrichment",
+            completed_video_ids=video_ids,
+            requested_video_ids=video_ids,
+        )
+
+    monkeypatch.setattr(main_pipeline, "run_worker_exclusively", retry_worker)
+    pipeline._retry_oom_result(
+        WorkerResult(
+            kind="enrichment",
+            completed_video_ids=("L01_V001",),
+            oom_video_id="L01_V002",
+            oom_message="CUDA out of memory",
+            requested_video_ids=("L01_V001", "L01_V002"),
+        )
+    )
+
+    assert retried == [("enrichment", ("L01_V002",), 1)]

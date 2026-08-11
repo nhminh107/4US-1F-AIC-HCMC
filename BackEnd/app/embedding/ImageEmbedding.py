@@ -1,12 +1,20 @@
+from typing import Any
+
 from BackEnd.app.embedding.BaseEmbedding import BaseEmbedder
 from PIL import Image
-from abc import ABC
 from pathlib import Path
 from BackEnd.app.contracts.pipeline import FrameMetadata
 import numpy as np
 from BackEnd import CONFIG as cf
 
 class ImageEmbedder(BaseEmbedder):
+    """Embed extracted frames, optionally through the shared CLIP adapter."""
+
+    def __init__(self, model_adapter: Any | None = None) -> None:
+        self._model_adapter = model_adapter
+        if model_adapter is None:
+            super().__init__()
+
     def get_real_data(self, data: FrameMetadata): 
         path = self._resolve_frame_path(data)
         with Image.open(path) as image:
@@ -16,6 +24,8 @@ class ImageEmbedder(BaseEmbedder):
         return data
 
     def encode(self, img):
+        if self._model_adapter is not None:
+            return self._model_adapter.encode_images([img])[0]
         embedding = self.model.encode(
             img,
             convert_to_numpy = True, 
@@ -39,6 +49,11 @@ class ImageEmbedder(BaseEmbedder):
         return batch_data
 
     def encode_batch(self, batch_img):
+        if self._model_adapter is not None:
+            return self._model_adapter.encode_images(
+                batch_img,
+                batch_size=cf.batch_size,
+            )
         embeddings = self.model.encode(
             batch_img, 
             batch_size = cf.batch_size, 
