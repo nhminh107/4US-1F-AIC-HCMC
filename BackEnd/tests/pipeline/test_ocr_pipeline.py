@@ -73,3 +73,56 @@ def test_run_ocr_processes_and_persists_video_frames() -> None:
             "language": "vi",
         }
     ]
+
+
+def test_run_ocr_bounds_frame_memory_with_chunks() -> None:
+    frames = [
+        FrameMetadata(
+            frame_id=f"L23_V005_E{index:03d}",
+            video_id="L23_V005",
+            shot_id="L23_V005_S000",
+            timestamp_ms=index * 1_000,
+            fps=25.0,
+            frame_idx=index * 25,
+            source="extracted",
+            frame_path=Path(f"frame-{index}.jpg"),
+        )
+        for index in range(1, 4)
+    ]
+
+    class ChunkedService:
+        def __init__(self) -> None:
+            self.batches: list[list[str]] = []
+
+        def process_batch(self, batch: list[FrameMetadata]) -> list[OCRResult]:
+            self.batches.append([frame.frame_id for frame in batch])
+            return [
+                OCRResult(
+                    frame_id=frame.frame_id,
+                    n=0,
+                    text="text",
+                    x_min=0.0,
+                    x_max=1.0,
+                    y_min=0.0,
+                    y_max=1.0,
+                    language="vi",
+                )
+                for frame in batch
+            ]
+
+    database = FakeDatabase(frames)
+    service = ChunkedService()
+
+    results = run_ocr(  # type: ignore[arg-type]
+        "L23_V005",
+        database,
+        service,  # type: ignore[arg-type]
+        frame_chunk_size=2,
+    )
+
+    assert service.batches == [
+        ["L23_V005_E001", "L23_V005_E002"],
+        ["L23_V005_E003"],
+    ]
+    assert len(results) == 3
+    assert len(database.saved) == 3

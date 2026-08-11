@@ -1,8 +1,9 @@
 --extra-index-url https://download.pytorch.org/whl/cu124
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
 
 opencv-python
 paddleocr
-paddlepaddle
+paddlepaddle-gpu==3.3.0
 numpy>=1.24.0
 vietocr
 pillow>=9.5.0
