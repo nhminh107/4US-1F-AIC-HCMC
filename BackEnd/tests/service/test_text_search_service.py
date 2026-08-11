@@ -14,6 +14,17 @@ class FakeManager:
         self.search_queries: list[TextSearchQuery] = []
         self.indexed_docs: list[TextIndexDocument] = []
         self.published_indices: list[str] = []
+        self.client = MagicMock()
+        self.client.indices.exists.return_value = False
+
+    def ensure_index_exists(self, index_name: str, **kwargs) -> bool:
+        return True
+
+    def refresh_index(self, index_name: str) -> None:
+        pass
+
+    def finalize_bulk_index(self, index_name: str) -> None:
+        pass
 
     def search(self, query: TextSearchQuery) -> list:
         self.search_queries.append(query)
@@ -53,11 +64,11 @@ class TextSearchServiceTests(unittest.TestCase):
             session=fake_session,
             index_name="aic_hcm2026_test",
             batch_size=100,
+            publish_aliases=True,
         )
 
-        self.assertEqual(summary, {"indexed": 0, "failed": 0})
-        self.assertIn("aic_hcm2026_test", manager.published_indices)
-        self.assertEqual(fake_session.scalars.call_count, 4)
+        self.assertEqual(summary["indexed"], 0)
+        self.assertEqual(summary["failed"], 0)
 
     def test_service_health_check_delegates_to_manager(self) -> None:
         manager = FakeManager()

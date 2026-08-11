@@ -134,6 +134,7 @@ class Frame(Base):
     fps: Mapped[float] = mapped_column(Float, nullable=False)
     frame_idx: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source: Mapped[str] = mapped_column(String(20), nullable=False)
+    frame_role: Mapped[str] = mapped_column(String(20), default="keyframe", server_default="keyframe")
     frame_path: Mapped[str | None] = mapped_column(String(200))
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)

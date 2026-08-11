@@ -139,6 +139,10 @@ class ElasticsearchDocumentBuilder:
         if not resolved_video_id:
             return None
 
+        shot = getattr(caption, "shot", None)
+        start_ms = getattr(caption, "start_ms", None) or (getattr(shot, "start_ms", None) if shot else None)
+        end_ms = getattr(caption, "end_ms", None) or (getattr(shot, "end_ms", None) if shot else None)
+
         return TextIndexDocument(
             doc_id=f"caption:{caption_id}:v1",
             source_type="caption",
@@ -151,9 +155,69 @@ class ElasticsearchDocumentBuilder:
             clip_id=getattr(caption, "clip_id", None),
             shot_id=getattr(caption, "shot_id", None),
             caption_id=caption_id,
+            start_ms=start_ms,
+            end_ms=end_ms,
             model_name=getattr(caption, "model_name", None),
             model_version=getattr(caption, "model_version", None),
             prompt_version=getattr(caption, "prompt_version", None),
+        )
+
+    def build_object_document(
+        self,
+        record: Any,
+        objects_input: list[Any],
+        *,
+        index_build_id: str,
+        video_id: str | None = None,
+        entity_id: str | None = None,
+    ) -> TextIndexDocument | None:
+        """Build a searchable text document for detected objects in a frame or shot."""
+
+        names: list[str] = []
+        class_ids: list[str] = []
+
+        for item in objects_input:
+            if isinstance(item, str):
+                name = self._normalize_text(item)
+                if name:
+                    names.append(name)
+            else:
+                conf = float(getattr(item, "confidence", 1.0))
+                if conf < 0.3:
+                    continue
+                obj_class = getattr(item, "object_class", None)
+                name = self._normalize_text(getattr(obj_class, "class_name", None) or getattr(item, "class_name", None))
+                cid = self._normalize_text(getattr(item, "class_id", None))
+                if name:
+                    names.append(name)
+                if cid:
+                    class_ids.append(cid)
+
+        content = self._join_text(*names)
+        if not content:
+            return None
+
+        resolved_vid = video_id or getattr(record, "video_id", None)
+        resolved_eid = entity_id or getattr(record, "frame_id", None) or getattr(record, "shot_id", None) or getattr(record, "video_id", None)
+        if not resolved_vid or not resolved_eid:
+            return None
+
+        doc_id = f"object:{resolved_eid}:v1"
+        return TextIndexDocument(
+            doc_id=doc_id,
+            source_type="object",
+            content=content,
+            video_id=str(resolved_vid),
+            entity_id=str(resolved_eid),
+            index_schema_version=INDEX_SCHEMA_VERSION,
+            index_build_id=index_build_id,
+            frame_id=getattr(record, "frame_id", None) if hasattr(record, "frame_id") else None,
+            shot_id=getattr(record, "shot_id", None) if hasattr(record, "shot_id") else None,
+            timestamp_ms=getattr(record, "timestamp_ms", None) if hasattr(record, "timestamp_ms") else None,
+            start_ms=getattr(record, "start_ms", None) if hasattr(record, "start_ms") else None,
+            end_ms=getattr(record, "end_ms", None) if hasattr(record, "end_ms") else None,
+            objects=tuple(names),
+            object_class_ids=tuple(class_ids),
         )
 
     @staticmethod

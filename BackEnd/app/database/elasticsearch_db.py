@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import UTC, datetime
-import os
-from typing import Any, Callable
-
 import logging
 import os
+import re
+from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 from dotenv import load_dotenv
@@ -19,6 +17,8 @@ from BackEnd.CONFIG import (
     ELASTICSEARCH_INDEX_SCHEMA_VERSION as INDEX_SCHEMA_VERSION,
 )
 from BackEnd.app.contracts.search import (
+    OBJECT_CLASS_SYNONYMS,
+    REVERSE_SYNONYMS,
     TextIndexDocument,
     TextSearchHit,
     TextSearchQuery,
@@ -41,6 +41,7 @@ DEFAULT_SOURCE_ALIASES: dict[TextSourceType, str] = {
     "ocr": "aic_hcm2026_text_ocr_active",
     "transcript": "aic_hcm2026_text_transcript_active",
     "caption": "aic_hcm2026_text_caption_active",
+    "object": "aic_hcm2026_text_object_active",
 }
 
 
@@ -78,13 +79,28 @@ class ElasticsearchManager:
         self.client = Elasticsearch(resolved_url, request_timeout=request_timeout)
 
     @staticmethod
-    def index_definition() -> dict[str, Any]:
-        """Return settings and mappings for the text evidence index."""
+    def index_definition(*, bigdata: bool = False) -> dict[str, Any]:
+        """Return settings and mappings for the text evidence index.
+
+        Args:
+            bigdata: When True, applies settings optimized for bulk ingestion
+                     of large datasets (>50K docs): more shards, best_compression,
+                     and disabled auto-refresh during indexing.
+        """
 
         text_field = {"type": "text", "analyzer": "aic_vi_text"}
         keyword_field = {"type": "keyword", "norms": False}
+
+        index_settings: dict[str, Any] = {
+            "number_of_shards": 3 if bigdata else 1,
+            "number_of_replicas": 0 if bigdata else 1,
+            "codec": "best_compression" if bigdata else "default",
+            "refresh_interval": "-1" if bigdata else "1s",
+        }
+
         return {
             "settings": {
+                "index": index_settings,
                 "analysis": {
                     "filter": {
                         "aic_ascii_folding": {
@@ -150,6 +166,12 @@ class ElasticsearchManager:
                         },
                     },
                     "ocr_text": text_field,
+                    "objects": {
+                        "type": "text",
+                        "analyzer": "aic_vi_text",
+                        "fields": {"raw": keyword_field},
+                    },
+                    "object_class_ids": keyword_field,
                     "regions": {
                         "type": "nested",
                         "properties": {
@@ -172,15 +194,57 @@ class ElasticsearchManager:
             },
         }
 
-    def create_index(self, index_name: str) -> None:
+    def create_index(self, index_name: str, *, bigdata: bool = False) -> None:
         """Create a physical Elasticsearch index."""
 
-        self.client.indices.create(index=index_name, body=self.index_definition())
+        self.client.indices.create(
+            index=index_name, body=self.index_definition(bigdata=bigdata)
+        )
+
+    def ensure_index_exists(self, index_name: str, *, bigdata: bool = False) -> bool:
+        """Create the index with proper mapping if it doesn't already exist.
+
+        Returns True if the index was created, False if it already existed.
+        """
+        if self.client.indices.exists(index=index_name):
+            logger.info("Index '%s' already exists, skipping creation.", index_name)
+            return False
+        self.create_index(index_name, bigdata=bigdata)
+        logger.info("Created index '%s' (bigdata=%s).", index_name, bigdata)
+        return True
 
     def refresh_index(self, index_name: str) -> None:
         """Explicitly refresh Lucene index segments."""
 
         self.client.indices.refresh(index=index_name)
+
+    def finalize_bulk_index(self, index_name: str) -> None:
+        """Re-enable refresh and force-merge after bulk ingestion.
+
+        Call this after bulk indexing with bigdata=True to restore
+        normal search behavior and optimize segments. Automatically detects
+        single-node clusters to maintain GREEN health status.
+        """
+        num_replicas = 0
+        try:
+            nodes_info = self.client.nodes.stats(metric="indices")
+            nodes_dict = nodes_info.get("nodes", {})
+            if len(nodes_dict) > 1:
+                num_replicas = 1
+        except Exception:
+            num_replicas = 0
+
+        self.client.indices.put_settings(
+            index=index_name,
+            body={"index": {"refresh_interval": "1s", "number_of_replicas": num_replicas}},
+        )
+        self.client.indices.refresh(index=index_name)
+        try:
+            self.client.indices.forcemerge(
+                index=index_name, max_num_segments=5, request_timeout=120
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Force merge on '%s' failed (non-fatal): %s", index_name, exc)
 
     def publish_source_aliases(self, index_name: str) -> None:
         """Atomically point source-specific filtered aliases at one index."""
@@ -208,6 +272,11 @@ class ElasticsearchManager:
 
         response = self.client.indices.update_aliases(body={"actions": actions})
         self._raise_for_unexpected_alias_errors(response)
+
+    def _client_with_options(self) -> Any:
+        if hasattr(self.client, "options"):
+            return self.client.options(request_timeout=self.request_timeout)
+        return self.client
 
     def index_documents(
         self,
@@ -260,7 +329,7 @@ class ElasticsearchManager:
             ]
 
             try:
-                client = self.client.options(request_timeout=self.request_timeout)
+                client = self._client_with_options()
                 success_count, errors = self.bulk_helper(
                     client,
                     actions,
@@ -278,7 +347,7 @@ class ElasticsearchManager:
     def search(self, query: TextSearchQuery) -> list[TextSearchHit]:
         """Search source aliases and parse raw Elasticsearch hits."""
 
-        response = self.client.options(request_timeout=self.request_timeout).search(
+        response = self._client_with_options().search(
             index=self._aliases_for_query(query),
             body=self._search_body(query),
         )
@@ -346,13 +415,23 @@ class ElasticsearchManager:
         filters.extend(self._temporal_filters(query))
         if query.ocr_region:
             filters.append(self._ocr_region_filter(query.ocr_region))
+        if query.object_region:
+            filters.append(self._ocr_region_filter(query.object_region))
 
+        # Tuned boost values for AIC dataset:
+        # - match_phrase: 5 (exact phrase match is strongest signal)
+        # - title: 5 (video titles are highly descriptive)
+        # - objects: 5 (object detection is primary AIC query pattern)
+        # - keywords: 4 (curated tags)
+        # - content/ocr_text: 3 (body text, moderate signal)
+        # - description: 2 (often noisy/long, lower signal)
+        # - regions.text: match_phrase^4 + match^2 (handles both exact phrase & word-split OCR)
         should: list[dict[str, Any]] = [
-            {"match_phrase": {"content": {"query": query.query_text, "boost": 6}}},
+            {"match_phrase": {"content": {"query": query.query_text, "boost": 5}}},
             {
                 "multi_match": {
                     "query": query.query_text,
-                    "fields": ["title^5", "keywords^4", "content^3", "ocr_text^3", "description"],
+                    "fields": ["title^5", "objects^5", "keywords^4", "content^3", "ocr_text^3", "description^2"],
                     "type": "best_fields",
                 }
             },
@@ -360,13 +439,59 @@ class ElasticsearchManager:
                 "nested": {
                     "path": "regions",
                     "query": {
-                        "match_phrase": {
-                            "regions.text": {"query": query.query_text, "boost": 3}
+                        "bool": {
+                            "should": [
+                                {
+                                    "match_phrase": {
+                                        "regions.text": {"query": query.query_text, "boost": 4}
+                                    }
+                                },
+                                {
+                                    "match": {
+                                        "regions.text": {"query": query.query_text, "boost": 2}
+                                    }
+                                },
+                            ]
                         }
                     },
                 }
             },
         ]
+
+        # Bidirectional Vietnamese <-> English Synonym Query Expansion for Objects with Word Boundary Check
+        q_lower = query.query_text.lower().strip()
+        expanded_terms: list[str] = []
+        # VI → EN expansion (using regex \b word boundary to prevent substring matches e.g. "carpet" -> "car")
+        for vn_key, en_terms in OBJECT_CLASS_SYNONYMS.items():
+            pattern = r"\b" + re.escape(vn_key) + r"\b"
+            if re.search(pattern, q_lower):
+                expanded_terms.extend(en_terms)
+        # EN → VI expansion (reverse lookup with word boundary)
+        for en_key, vn_terms in REVERSE_SYNONYMS.items():
+            pattern = r"\b" + re.escape(en_key) + r"\b"
+            if re.search(pattern, q_lower):
+                expanded_terms.extend(vn_terms)
+        if expanded_terms:
+            synonym_query = " ".join(set(expanded_terms))
+            should.append({
+                "multi_match": {
+                    "query": synonym_query,
+                    "fields": ["objects^5", "content^3"],
+                    "type": "best_fields",
+                }
+            })
+
+        if query.source_boosts:
+            for stype, boost_val in query.source_boosts.items():
+                should.append({
+                    "term": {
+                        "source_type": {
+                            "value": stype,
+                            "boost": boost_val,
+                        }
+                    }
+                })
+
         if query.use_fuzzy:
             should.append(
                 {
@@ -442,10 +567,10 @@ class ElasticsearchManager:
             "left": [{"range": {"regions.x_max": {"lte": 0.35}}}],
             "right": [{"range": {"regions.x_min": {"gte": 0.65}}}],
             "center": [
-                {"range": {"regions.x_min": {"lte": 0.65}}},
-                {"range": {"regions.x_max": {"gte": 0.35}}},
-                {"range": {"regions.y_min": {"lte": 0.65}}},
-                {"range": {"regions.y_max": {"gte": 0.35}}},
+                {"range": {"regions.x_min": {"gte": 0.20}}},
+                {"range": {"regions.x_max": {"lte": 0.80}}},
+                {"range": {"regions.y_min": {"gte": 0.20}}},
+                {"range": {"regions.y_max": {"lte": 0.80}}},
             ],
         }
         return {
@@ -469,6 +594,7 @@ class ElasticsearchManager:
             entity_id=source.get("entity_id"),
             content=source.get("content"),
             highlights=tuple(highlights),
+            objects=tuple(source.get("objects") or ()),
             shot_id=source.get("shot_id"),
             frame_id=source.get("frame_id"),
             clip_id=source.get("clip_id"),

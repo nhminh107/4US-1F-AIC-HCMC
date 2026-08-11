@@ -166,6 +166,7 @@ class PostgreManager:
         frame_path: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        frame_role: str = "keyframe",
     ) -> Frame:
         """Insert a frame, optionally belonging to an existing shot."""
 
@@ -191,6 +192,7 @@ class PostgreManager:
                 fps=fps,
                 frame_idx=frame_idx,
                 source=source,
+                frame_role=frame_role,
                 frame_path=frame_path,
                 width=width,
                 height=height,

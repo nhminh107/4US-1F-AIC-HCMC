@@ -204,11 +204,11 @@ class ElasticsearchManagerTests(unittest.TestCase):
         manager.publish_source_aliases("aic_hcm2026_text_v1_test")
 
         actions = client.indices.alias_updates[0]["body"]["actions"]
-        self.assertEqual(len(actions), 8)
+        self.assertEqual(len(actions), 10)
         remove_actions = [action for action in actions if "remove" in action]
         add_actions = [action for action in actions if "add" in action]
-        self.assertEqual(len(remove_actions), 4)
-        self.assertEqual(len(add_actions), 4)
+        self.assertEqual(len(remove_actions), 5)
+        self.assertEqual(len(add_actions), 5)
         self.assertTrue(
             all(
                 action["remove"]["index"] == "*"

@@ -5,14 +5,59 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-TextSourceType = Literal["video_metadata", "ocr", "transcript", "caption"]
+TextSourceType = Literal["video_metadata", "ocr", "transcript", "caption", "object"]
 
 TEXT_SOURCE_TYPES: frozenset[str] = frozenset(
-    {"video_metadata", "ocr", "transcript", "caption"}
+    {"video_metadata", "ocr", "transcript", "caption", "object"}
 )
 OCR_REGIONS: frozenset[str] = frozenset(
     {"top", "header", "bottom", "footer", "left", "right", "center"}
 )
+OBJECT_REGIONS: frozenset[str] = OCR_REGIONS
+
+# Mapping Vietnamese search query terms to English OpenImages/COCO object classes
+OBJECT_CLASS_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "xe hơi": ("Car", "Vehicle", "Land vehicle", "Automobile"),
+    "ô tô": ("Car", "Vehicle", "Land vehicle", "Automobile"),
+    "người": ("Person", "Man", "Woman", "Boy", "Girl", "Human face", "Human body", "Human head"),
+    "con người": ("Person", "Man", "Woman", "Boy", "Girl"),
+    "đàn ông": ("Man", "Person"),
+    "phụ nữ": ("Woman", "Girl", "Person"),
+    "con gái": ("Girl", "Woman", "Person"),
+    "con trai": ("Boy", "Man", "Person"),
+    "tòa nhà": ("Building", "Skyscraper", "House"),
+    "nhà": ("Building", "House"),
+    "xe máy": ("Motorcycle", "Vehicle", "Land vehicle"),
+    "xe đạp": ("Bicycle", "Vehicle", "Land vehicle"),
+    "mặt người": ("Human face",),
+    "khuôn mặt": ("Human face",),
+    "mắt kính": ("Glasses", "Fashion accessory"),
+    "kính": ("Glasses",),
+    "quần áo": ("Clothing", "Shirt", "Dress", "Suit", "Trousers"),
+    "áo": ("Shirt", "Clothing", "Dress", "Suit"),
+    "váy": ("Dress", "Clothing"),
+    "bàn": ("Table", "Desk", "Furniture"),
+    "ghế": ("Chair", "Furniture"),
+    "con chó": ("Dog", "Mammal", "Animal"),
+    "con mèo": ("Cat", "Mammal", "Animal"),
+    "tháp": ("Tower", "Building", "Skyscraper"),
+    "poster": ("Poster",),
+    "áp phích": ("Poster",),
+}
+
+# Auto-generated reverse map: English object class name → Vietnamese search terms
+# Enables bidirectional synonym expansion (both VI→EN and EN→VI)
+_reverse: dict[str, list[str]] = {}
+for _vn_key, _en_values in OBJECT_CLASS_SYNONYMS.items():
+    for _en_val in _en_values:
+        _en_lower = _en_val.lower()
+        if _en_lower not in _reverse:
+            _reverse[_en_lower] = []
+        if _vn_key not in _reverse[_en_lower]:
+            _reverse[_en_lower].append(_vn_key)
+REVERSE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    k: tuple(v) for k, v in _reverse.items()
+}
 
 
 def _require_non_empty(value: str, field_name: str) -> str:
@@ -66,6 +111,8 @@ class TextIndexDocument:
     description: str | None = None
     ocr_text: str | None = None
     keywords: tuple[str, ...] = field(default_factory=tuple)
+    objects: tuple[str, ...] = field(default_factory=tuple)
+    object_class_ids: tuple[str, ...] = field(default_factory=tuple)
     regions: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     model_name: str | None = None
     model_version: str | None = None
@@ -113,6 +160,16 @@ class TextIndexDocument:
         )
         object.__setattr__(
             self,
+            "objects",
+            _normalize_tuple(self.objects, "objects"),
+        )
+        object.__setattr__(
+            self,
+            "object_class_ids",
+            _normalize_tuple(self.object_class_ids, "object_class_ids"),
+        )
+        object.__setattr__(
+            self,
             "regions",
             _normalize_tuple(self.regions, "regions"),
         )
@@ -136,6 +193,8 @@ class TextSearchQuery:
     start_ms: int | None = None
     end_ms: int | None = None
     ocr_region: str | None = None
+    object_region: str | None = None
+    source_boosts: dict[TextSourceType, float] | None = None
     use_fuzzy: bool = False
     use_highlight: bool = False
 
@@ -173,6 +232,8 @@ class TextSearchQuery:
 
         if self.ocr_region is not None and self.ocr_region not in OCR_REGIONS:
             raise ValueError(f"Unsupported ocr_region: {self.ocr_region}.")
+        if self.object_region is not None and self.object_region not in OBJECT_REGIONS:
+            raise ValueError(f"Unsupported object_region: {self.object_region}.")
         _validate_time_range(self.start_ms, self.end_ms)
 
 
@@ -187,6 +248,7 @@ class TextSearchHit:
     entity_id: str
     content: str
     highlights: tuple[str, ...] = field(default_factory=tuple)
+    objects: tuple[str, ...] = field(default_factory=tuple)
     shot_id: str | None = None
     frame_id: str | None = None
     clip_id: str | None = None
@@ -224,6 +286,11 @@ class TextSearchHit:
             self,
             "highlights",
             _normalize_tuple(self.highlights, "highlights"),
+        )
+        object.__setattr__(
+            self,
+            "objects",
+            _normalize_tuple(self.objects, "objects"),
         )
         if self.timestamp_ms is not None and self.timestamp_ms < 0:
             raise ValueError("timestamp_ms must be greater than or equal to 0.")
