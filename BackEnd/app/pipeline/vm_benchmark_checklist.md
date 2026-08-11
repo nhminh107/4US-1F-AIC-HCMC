@@ -4,8 +4,8 @@ Mục tiêu là dựng một VM staging có thể chạy đúng pipeline hiện 
 ghi thật vào PostgreSQL + FAISS trong khoảng một giờ. Không dùng database,
 FAISS index hoặc thư mục output của môi trường production.
 
-Checklist này không bao gồm việc tải dữ liệu dataset. Giả sử dữ liệu đã được
-mount/copy vào `<PROJECT_ROOT>/data` với đúng cấu trúc hiện có.
+Có thể dùng `scripts/download_aic25_data.sh` để tải dataset public và đặt vào
+`<PROJECT_ROOT>/data` với đúng cấu trúc hiện có.
 
 ## 0. Quy ước an toàn
 
@@ -113,6 +113,18 @@ mount/copy vào `<PROJECT_ROOT>/data` với đúng cấu trúc hiện có.
   ```
 
 ## 5. Chuẩn bị dữ liệu và model weights
+
+- [ ] Nếu chưa mount/copy dữ liệu, tải và giải nén archive public. Script có
+  resume download, kiểm tra ZIP trước extract, giữ file hiện có và xóa archive
+  chỉ sau khi extract thành công:
+
+  ```bash
+  ./scripts/download_aic25_data.sh
+  ```
+
+  Có thể tải trước archive nhưng chưa extract với `--download-only`, hoặc chỉ
+  tải một nhóm, ví dụ `--only video,keyframes`. Dùng `--overwrite` chỉ khi chủ
+  đích thay file data đã tồn tại.
 
 - [ ] Bảo đảm các thư mục dữ liệu cần cho benchmark tồn tại:
 
