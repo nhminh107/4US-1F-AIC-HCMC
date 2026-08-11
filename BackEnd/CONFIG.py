@@ -31,10 +31,13 @@ general_batch_size = GENERAL_BATCH_SIZE
 # when both PyTorch and PaddleOCR can use CUDA. Set ``parallel`` to require the
 # concurrent mode, or ``sequential`` for deterministic one-stage-at-a-time
 # execution.
-PIPELINE_PARALLEL_MODE = "auto"
-PIPELINE_GPU_HEADROOM_GIB = 8
-PIPELINE_TRACKING_VRAM_BUDGET_GIB = 12
-PIPELINE_OCR_VRAM_BUDGET_GIB = 16
+PIPELINE_PARALLEL_MODE = "parallel"
+# These are admission-control reservations, not measured allocations. The
+# models are lightweight enough to share a 24 GiB GPU; OOM recovery still
+# retries the unfinished worker sequentially if this estimate is exceeded.
+PIPELINE_GPU_HEADROOM_GIB = 6
+PIPELINE_TRACKING_VRAM_BUDGET_GIB = 8
+PIPELINE_OCR_VRAM_BUDGET_GIB = 8
 PIPELINE_MAX_OOM_RETRIES = 2
 
 
@@ -140,8 +143,8 @@ class ClipExtractorConfig:
 DEFAULT_VIETOCR_CONFIG_PATH = (
     BACKEND_ROOT / "app" / "ocr" / "configs" / "vietocr_vgg_transformer.yml"
 )
-OCR_DETECTION_BATCH_SIZE = 4
-OCR_RECOGNITION_BATCH_SIZE = GENERAL_BATCH_SIZE
+OCR_DETECTION_BATCH_SIZE = 16
+OCR_RECOGNITION_BATCH_SIZE = 128
 OCR_FRAME_CHUNK_SIZE = 32
 OCR_LEGACY_CHUNK_SIZE = 100
 OCR_LEGACY_DETECTION_CONFIDENCE_THRESHOLD = 0.65
@@ -243,6 +246,7 @@ TRACKING_TRACKER_CONFIG_PATH = (
     BACKEND_ROOT / "app" / "tracking" / "bytetrack.yaml"
 )
 TRACKING_CLASS_MAPPING_VERSION = "coco80-openimages-v1"
+TRACKING_BATCH_SIZE = 32
 # Classes with useful temporal behavior for retrieval. Static indoor objects
 # remain available through the independent ObjectDetection pipeline.
 TRACKING_COCO_CLASS_INDICES = (
@@ -280,6 +284,7 @@ class TrackingConfig:
     confidence_threshold: float = 0.25
     iou_threshold: float = 0.70
     max_detections: int = 300
+    batch_size: int = TRACKING_BATCH_SIZE
     mapping_version: str = TRACKING_CLASS_MAPPING_VERSION
     class_indices: tuple[int, ...] = TRACKING_COCO_CLASS_INDICES
 
@@ -292,6 +297,8 @@ class TrackingConfig:
             raise ValueError("iou_threshold must be within [0, 1].")
         if self.max_detections <= 0:
             raise ValueError("max_detections must be positive.")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
         if not self.mapping_version:
             raise ValueError("mapping_version must not be empty.")
         if not self.class_indices:
@@ -316,7 +323,7 @@ device = (
     if torch is not None
     else "cpu"
 )
-EMBEDDING_BATCH_SIZE = 64
+EMBEDDING_BATCH_SIZE = 128
 # Backward-compatible lowercase name used by the current embedding module.
 batch_size = EMBEDDING_BATCH_SIZE
 

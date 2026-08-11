@@ -148,25 +148,24 @@ class YOLOTrackingService:
         if not ordered_shots:
             return TrackingBatchResult([], [])
 
-        self._reset_tracker_state()
         observations: list[TrackObservationResult] = []
         accumulators: dict[int, _TrackAccumulator] = {}
         local_track_ids: dict[tuple[str, str, int], int] = {}
         next_local_track_id = 1
         shot_index = 0
         active_shot_id: str | None = None
+        sampled_batch: list[tuple[ShotMetadata, int, int, np.ndarray]] = []
         next_sample_ms = ordered_shots[0].start_ms
         sample_interval_ms = 1_000 / self.config.sampling_fps
 
         def advance_to_shot(timestamp_ms: int) -> ShotMetadata | None:
-            nonlocal shot_index, active_shot_id, next_sample_ms
+            nonlocal shot_index, next_sample_ms
 
             while (
                 shot_index < len(ordered_shots)
                 and timestamp_ms >= ordered_shots[shot_index].end_ms
             ):
                 shot_index += 1
-                active_shot_id = None
                 if shot_index < len(ordered_shots):
                     next_sample_ms = ordered_shots[shot_index].start_ms
 
@@ -177,10 +176,77 @@ class YOLOTrackingService:
             if timestamp_ms < shot.start_ms:
                 return None
 
-            if active_shot_id != shot.shot_id:
-                self._reset_tracker_state()
-                active_shot_id = shot.shot_id
             return shot
+
+        def flush_batch() -> None:
+            nonlocal next_local_track_id
+
+            if not sampled_batch:
+                return
+            tracked_frames = self._track_batch(
+                [sample[3] for sample in sampled_batch]
+            )
+            if len(tracked_frames) != len(sampled_batch):
+                raise RuntimeError(
+                    "YOLO tracking returned a different number of frames than "
+                    "the submitted batch."
+                )
+
+            for sample, tracked_boxes in zip(
+                sampled_batch,
+                tracked_frames,
+                strict=True,
+            ):
+                shot, timestamp_ms, frame_idx, image = sample
+                image_height, image_width = image.shape[:2]
+                for internal_track_id, coco_index, confidence, xyxy in tracked_boxes:
+                    normalized_box = self._normalize_box(
+                        xyxy,
+                        width=image_width,
+                        height=image_height,
+                    )
+                    if normalized_box is None:
+                        continue
+
+                    canonical_class = get_canonical_class(coco_index)
+                    key = (
+                        shot.shot_id,
+                        canonical_class.class_id,
+                        internal_track_id,
+                    )
+                    if key not in local_track_ids:
+                        local_track_ids[key] = next_local_track_id
+                        accumulators[next_local_track_id] = _TrackAccumulator(
+                            track_id=next_local_track_id,
+                            shot_id=shot.shot_id,
+                            class_id=canonical_class.class_id,
+                            start_ms=timestamp_ms,
+                            end_ms=timestamp_ms,
+                            start_frame_idx=frame_idx,
+                            end_frame_idx=frame_idx,
+                        )
+                        next_local_track_id += 1
+
+                    local_track_id = local_track_ids[key]
+                    accumulators[local_track_id].add(
+                        timestamp_ms,
+                        frame_idx,
+                        confidence,
+                    )
+                    x_min, y_min, x_max, y_max = normalized_box
+                    observations.append(
+                        TrackObservationResult(
+                            track_id=local_track_id,
+                            frame_idx=frame_idx,
+                            timestamp_ms=timestamp_ms,
+                            confidence=confidence,
+                            x_min=x_min,
+                            x_max=x_max,
+                            y_min=y_min,
+                            y_max=y_max,
+                        )
+                    )
+            sampled_batch.clear()
 
         for timestamp_ms, frame_idx, image in _iter_video_frames(video_path):
             shot = advance_to_shot(timestamp_ms)
@@ -194,55 +260,16 @@ class YOLOTrackingService:
             while next_sample_ms <= timestamp_ms:
                 next_sample_ms += sample_interval_ms
 
-            tracked_boxes = self._track_frame(image)
-            image_height, image_width = image.shape[:2]
-            for internal_track_id, coco_index, confidence, xyxy in tracked_boxes:
-                normalized_box = self._normalize_box(
-                    xyxy,
-                    width=image_width,
-                    height=image_height,
-                )
-                if normalized_box is None:
-                    continue
+            if active_shot_id != shot.shot_id:
+                flush_batch()
+                self._reset_tracker_state()
+                active_shot_id = shot.shot_id
 
-                canonical_class = get_canonical_class(coco_index)
-                key = (
-                    shot.shot_id,
-                    canonical_class.class_id,
-                    internal_track_id,
-                )
-                if key not in local_track_ids:
-                    local_track_ids[key] = next_local_track_id
-                    accumulators[next_local_track_id] = _TrackAccumulator(
-                        track_id=next_local_track_id,
-                        shot_id=shot.shot_id,
-                        class_id=canonical_class.class_id,
-                        start_ms=timestamp_ms,
-                        end_ms=timestamp_ms,
-                        start_frame_idx=frame_idx,
-                        end_frame_idx=frame_idx,
-                    )
-                    next_local_track_id += 1
+            sampled_batch.append((shot, timestamp_ms, frame_idx, image))
+            if len(sampled_batch) >= self.config.batch_size:
+                flush_batch()
 
-                local_track_id = local_track_ids[key]
-                accumulators[local_track_id].add(
-                    timestamp_ms,
-                    frame_idx,
-                    confidence,
-                )
-                x_min, y_min, x_max, y_max = normalized_box
-                observations.append(
-                    TrackObservationResult(
-                        track_id=local_track_id,
-                        frame_idx=frame_idx,
-                        timestamp_ms=timestamp_ms,
-                        confidence=confidence,
-                        x_min=x_min,
-                        x_max=x_max,
-                        y_min=y_min,
-                        y_max=y_max,
-                    )
-                )
+        flush_batch()
 
         tracks = [
             self._to_track_contract(accumulator)
@@ -257,12 +284,16 @@ class YOLOTrackingService:
         ]
         return TrackingBatchResult(tracks, retained_observations)
 
-    def _track_frame(
+    def _track_batch(
         self,
-        image: np.ndarray,
-    ) -> list[tuple[int, int, float, np.ndarray]]:
+        images: list[np.ndarray],
+    ) -> list[list[tuple[int, int, float, np.ndarray]]]:
+        """Batch YOLO detection while ByteTrack associates frames in order."""
+
+        if not images:
+            return []
         kwargs: dict[str, Any] = {
-            "source": image,
+            "source": images,
             "persist": True,
             "tracker": str(self.tracker_config_path),
             "conf": self.config.confidence_threshold,
@@ -274,11 +305,20 @@ class YOLOTrackingService:
         if self.config.device is not None:
             kwargs["device"] = self.config.device
 
-        results = self.model.track(**kwargs)
-        if not results:
-            return []
+        results = list(self.model.track(**kwargs))
+        if len(results) != len(images):
+            raise RuntimeError(
+                "YOLO tracking must return exactly one result per input image."
+            )
+        return [self._tracked_boxes_from_result(result) for result in results]
 
-        boxes = getattr(results[0], "boxes", None)
+    @staticmethod
+    def _tracked_boxes_from_result(
+        result: Any,
+    ) -> list[tuple[int, int, float, np.ndarray]]:
+        """Convert one Ultralytics tracking result to the pipeline contract."""
+
+        boxes = getattr(result, "boxes", None)
         if boxes is None or not bool(getattr(boxes, "is_track", False)):
             return []
 
