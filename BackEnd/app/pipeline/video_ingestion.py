@@ -4,7 +4,6 @@ File này để lưu tất cả video của BTC vào Postgre"""
 from __future__ import annotations
 
 import json
-import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from BackEnd.CONFIG import (
     PROJECT_ROOT,
-    VIDEO_DESCRIPTION_MAX_LENGTH as DESCRIPTION_MAX_LENGTH,
     VIDEO_DIR as DEFAULT_VIDEO_DIR,
     VIDEO_METADATA_DIR as DEFAULT_METADATA_DIR,
 )
@@ -31,8 +29,7 @@ def ingest_videos(
     A video record is still created when its local MP4 is unavailable because
     organizer metadata covers more videos than the local media collection.
 
-    Returns counts for discovered, inserted, skipped, locally available, and
-    truncated-description records.
+    Returns counts for discovered, inserted, skipped, and locally available records.
     """
 
     resolved_metadata_dir = Path(metadata_dir).expanduser().resolve()
@@ -52,7 +49,6 @@ def ingest_videos(
     inserted = 0
     skipped = 0
     local_videos = 0
-    truncated_descriptions = 0
     session = None
 
     try:
@@ -82,11 +78,6 @@ def ingest_videos(
                 except ValueError:
                     stored_video_path = str(video_file)
 
-                description = metadata.get("description")
-                if description and len(description) > DESCRIPTION_MAX_LENGTH:
-                    description = description[:DESCRIPTION_MAX_LENGTH]
-                    truncated_descriptions += 1
-
                 publish_date = metadata.get("publish_date")
                 parsed_publish_date = (
                     datetime.strptime(publish_date, "%d/%m/%Y").date()
@@ -106,7 +97,7 @@ def ingest_videos(
                         video_id=video_id,
                         video_path=stored_video_path,
                         title=metadata.get("title"),
-                        description=description,
+                        description=metadata.get("description"),
                         keywords=metadata.get("keywords"),
                         author=metadata.get("author"),
                         channel_id=metadata.get("channel_id"),
@@ -128,19 +119,11 @@ def ingest_videos(
     finally:
         manager.engine.dispose()
 
-    if truncated_descriptions:
-        warnings.warn(
-            f"Truncated {truncated_descriptions} video descriptions to "
-            f"{DESCRIPTION_MAX_LENGTH} characters to match the database schema.",
-            stacklevel=2,
-        )
-
     return {
         "discovered": len(metadata_paths),
         "inserted": inserted,
         "skipped": skipped,
         "local_videos": local_videos,
-        "truncated_descriptions": truncated_descriptions,
     }
 
 
