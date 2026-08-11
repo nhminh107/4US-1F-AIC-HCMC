@@ -47,7 +47,7 @@ Có thể dùng `scripts/download_aic25_data.sh` để tải dataset public và 
 
   ```bash
   sudo apt update
-  sudo apt install -y git ffmpeg postgresql postgresql-contrib libgl1 libglib2.0-0
+  sudo apt install -y git ffmpeg aria2 unzip rsync postgresql postgresql-contrib libgl1 libglib2.0-0
   ```
 
 - [ ] Xác nhận:
@@ -56,6 +56,9 @@ Có thể dùng `scripts/download_aic25_data.sh` để tải dataset public và 
   git --version
   ffmpeg -version
   ffprobe -version
+  aria2c -v
+  unzip -v
+  rsync --version
   psql --version
   ```
 
@@ -88,6 +91,9 @@ Có thể dùng `scripts/download_aic25_data.sh` để tải dataset public và 
 
   `requirements.txt` dùng `paddlepaddle-gpu==3.3.0` từ channel CUDA 12.6.
   Không cài đồng thời `paddlepaddle` và `paddlepaddle-gpu`.
+  TensorFlow/Faster R-CNN không nằm trong requirements benchmark vì xung đột
+  cuBLAS với Paddle GPU; nếu cần ObjectDetection TensorFlow, dùng environment
+  riêng và `requirements-object-detection.txt`.
 
 ## 4. Kiểm tra runtime GPU trước khi tải model
 
@@ -123,8 +129,10 @@ Có thể dùng `scripts/download_aic25_data.sh` để tải dataset public và 
   ```
 
   Có thể tải trước archive nhưng chưa extract với `--download-only`, hoặc chỉ
-  tải một nhóm, ví dụ `--only video,keyframes`. Dùng `--overwrite` chỉ khi chủ
-  đích thay file data đã tồn tại.
+  tải một nhóm, ví dụ `--only video,keyframes`. Mặc định `aria2c` mở 16 kết
+  nối cho từng archive (`--connections 16`); chỉ tăng `--jobs` khi CDN và disk
+  vẫn còn dư. Extraction vẫn tuần tự. Dùng `--overwrite` chỉ khi chủ đích thay
+  file data đã tồn tại.
 
 - [ ] Bảo đảm các thư mục dữ liệu cần cho benchmark tồn tại:
 
