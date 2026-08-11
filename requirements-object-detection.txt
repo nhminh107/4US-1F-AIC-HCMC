@@ -1,0 +1,5 @@
+# Optional Faster R-CNN / TensorFlow Open Images stack.
+# Install in a separate environment from the Paddle GPU benchmark environment:
+# TensorFlow CUDA 12.x and PaddlePaddle GPU pin incompatible cuBLAS versions.
+tensorflow[and-cuda]>=2.16,<2.19
+tensorflow-hub>=0.16,<0.17

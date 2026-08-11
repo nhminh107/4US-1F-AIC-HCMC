@@ -1,4 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cu124
+--extra-index-url https://download.pytorch.org/whl/cu126
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
 
 opencv-python
@@ -29,6 +29,4 @@ sqlalchemy>=2.0.0
 python-dotenv>=1.0.0
 pytest>=8.0.0
 webrtcvad>=2.0.10
-tensorflow[and-cuda]>=2.16,<2.19
-tensorflow-hub>=0.16,<0.17
 chunkformer

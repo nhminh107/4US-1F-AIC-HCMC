@@ -14,6 +14,8 @@ OVERWRITE=false
 DOWNLOAD_ONLY=false
 EXTRACT_ONLY=false
 ONLY_GROUPS=""
+DOWNLOAD_JOBS=1
+CONNECTIONS_PER_ARCHIVE=16
 
 readonly -a ARCHIVES=(
   "keyframes|Keyframes_L21.zip|https://aic-data.ledo.io.vn/Keyframes_L21.zip"
@@ -60,6 +62,9 @@ Options:
   --only GROUPS        Comma-separated groups: keyframes,video,clip-features-32,
                        map-keyframes,media-info-aic25-b1,objects-aic25-b1.
   --download-dir PATH  Archive cache directory (default: data/.downloads).
+  --jobs COUNT         Concurrent archive downloads (default: 1, maximum: 8).
+  --connections COUNT  Connections used for each archive by aria2c (default: 16,
+                       maximum: 32).
   --keep-archives      Keep verified ZIP archives after extraction.
   --overwrite          Replace files already present in the target data directory.
   --download-only      Download and validate ZIPs; do not extract them.
@@ -67,13 +72,16 @@ Options:
   -h, --help           Show this message.
 
 By default existing data files are preserved, verified ZIP archives are removed
-after successful extraction, and incomplete downloads resume via curl.
+after successful extraction, and incomplete downloads resume via aria2c.
 EOF
 }
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "Required command not found: $1" >&2
+    if [[ "$1" == "unzip" || "$1" == "rsync" || "$1" == "aria2c" ]]; then
+      echo "Ubuntu: sudo apt update && sudo apt install -y aria2 unzip rsync" >&2
+    fi
     exit 1
   }
 }
@@ -102,23 +110,30 @@ target_for_group() {
 download_archive() {
   local archive_path=$1
   local url=$2
-  local partial_path="${archive_path}.part"
-
   if [[ -f "${archive_path}" ]]; then
     if unzip -tq "${archive_path}" >/dev/null; then
       echo "Using verified archive: ${archive_path}"
       return
     fi
-    echo "Existing archive is invalid: ${archive_path}" >&2
-    echo "Move or remove it manually, then rerun the script." >&2
-    exit 1
+    echo "Resuming incomplete or invalid archive: ${archive_path}" >&2
   fi
 
   echo "Downloading: ${url}"
-  curl --fail --location --retry 5 --retry-all-errors --continue-at - \
-    --output "${partial_path}" "${url}"
-  unzip -tq "${partial_path}" >/dev/null
-  mv -- "${partial_path}" "${archive_path}"
+  aria2c \
+    --allow-overwrite=true \
+    --auto-file-renaming=false \
+    --continue=true \
+    --dir "${DOWNLOAD_DIR}" \
+    --file-allocation=none \
+    --max-connection-per-server="${CONNECTIONS_PER_ARCHIVE}" \
+    --max-tries=5 \
+    --min-split-size=4M \
+    --out "$(basename -- "${archive_path}")" \
+    --retry-wait=3 \
+    --split="${CONNECTIONS_PER_ARCHIVE}" \
+    --summary-interval=10 \
+    "${url}"
+  unzip -tq "${archive_path}" >/dev/null
 }
 
 find_payload_root() {
@@ -177,6 +192,30 @@ extract_archive() {
   trap - RETURN
 }
 
+download_selected_archives() {
+  local -a entries=("$@")
+  local -a process_ids=()
+  local entry group filename url archive_path
+
+  for entry in "${entries[@]}"; do
+    IFS='|' read -r group filename url <<< "${entry}"
+    archive_path="${DOWNLOAD_DIR}/${filename}"
+    download_archive "${archive_path}" "${url}" &
+    process_ids+=("$!")
+
+    if [[ ${#process_ids[@]} -ge ${DOWNLOAD_JOBS} ]]; then
+      for process_id in "${process_ids[@]}"; do
+        wait "${process_id}"
+      done
+      process_ids=()
+    fi
+  done
+
+  for process_id in "${process_ids[@]}"; do
+    wait "${process_id}"
+  done
+}
+
 parse_arguments() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -186,6 +225,14 @@ parse_arguments() {
         ;;
       --download-dir)
         DOWNLOAD_DIR=${2:?"--download-dir requires a path"}
+        shift 2
+        ;;
+      --jobs)
+        DOWNLOAD_JOBS=${2:?"--jobs requires a positive integer"}
+        shift 2
+        ;;
+      --connections)
+        CONNECTIONS_PER_ARCHIVE=${2:?"--connections requires a positive integer"}
         shift 2
         ;;
       --keep-archives)
@@ -220,44 +267,64 @@ parse_arguments() {
     echo "--download-only and --extract-only cannot be used together." >&2
     exit 2
   fi
+  if ! [[ "${DOWNLOAD_JOBS}" =~ ^[1-8]$ ]]; then
+    echo "--jobs must be an integer from 1 to 8." >&2
+    exit 2
+  fi
+  if ! [[ "${CONNECTIONS_PER_ARCHIVE}" =~ ^([1-9]|[12][0-9]|3[0-2])$ ]]; then
+    echo "--connections must be an integer from 1 to 32." >&2
+    exit 2
+  fi
 }
 
 main() {
   parse_arguments "$@"
-  require_command curl
+  require_command aria2c
   require_command unzip
   require_command rsync
   require_command find
 
   mkdir -p "${DATA_ROOT}" "${DOWNLOAD_DIR}"
-  local selected_count=0
+  local -a selected_entries=()
   local entry group filename url archive_path
   for entry in "${ARCHIVES[@]}"; do
     IFS='|' read -r group filename url <<< "${entry}"
     group_is_selected "${group}" || continue
-    selected_count=$((selected_count + 1))
-    archive_path="${DOWNLOAD_DIR}/${filename}"
-
-    if [[ "${EXTRACT_ONLY}" == false ]]; then
-      download_archive "${archive_path}" "${url}"
-    elif [[ ! -f "${archive_path}" ]]; then
-      echo "Missing archive for --extract-only: ${archive_path}" >&2
-      exit 1
-    fi
-
-    if [[ "${DOWNLOAD_ONLY}" == false ]]; then
-      extract_archive "${archive_path}" "${group}"
-      if [[ "${KEEP_ARCHIVES}" == false ]]; then
-        rm -- "${archive_path}"
-      fi
-    fi
+    selected_entries+=("${entry}")
   done
 
-  if [[ ${selected_count} -eq 0 ]]; then
+  if [[ ${#selected_entries[@]} -eq 0 ]]; then
     echo "No archive groups selected. Check --only." >&2
     exit 2
   fi
-  echo "Completed ${selected_count} archive(s)."
+
+  local start
+  local -a batch=()
+  for ((start = 0; start < ${#selected_entries[@]}; start += DOWNLOAD_JOBS)); do
+    batch=("${selected_entries[@]:start:DOWNLOAD_JOBS}")
+    if [[ "${EXTRACT_ONLY}" == false ]]; then
+      download_selected_archives "${batch[@]}"
+    fi
+
+    for entry in "${batch[@]}"; do
+      IFS='|' read -r group filename url <<< "${entry}"
+      archive_path="${DOWNLOAD_DIR}/${filename}"
+
+      if [[ "${EXTRACT_ONLY}" == true && ! -f "${archive_path}" ]]; then
+        echo "Missing archive for --extract-only: ${archive_path}" >&2
+        exit 1
+      fi
+
+      if [[ "${DOWNLOAD_ONLY}" == false ]]; then
+        extract_archive "${archive_path}" "${group}"
+        if [[ "${KEEP_ARCHIVES}" == false ]]; then
+          rm -- "${archive_path}"
+        fi
+      fi
+    done
+  done
+
+  echo "Completed ${#selected_entries[@]} archive(s)."
 }
 
 main "$@"
