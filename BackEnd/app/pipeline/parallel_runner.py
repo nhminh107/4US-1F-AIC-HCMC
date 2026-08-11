@@ -9,8 +9,13 @@ from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, replace
+import json
 from multiprocessing import get_context
 import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 from typing import Literal
 
 from BackEnd.CONFIG import (
@@ -54,16 +59,6 @@ def check_parallel_gpu_preflight() -> GPUPreflight:
         return GPUPreflight(False, "PyTorch is not installed.")
     if not torch.cuda.is_available():
         return GPUPreflight(False, "PyTorch cannot access CUDA.")
-
-    try:
-        import paddle
-    except ImportError:
-        return GPUPreflight(False, "PaddlePaddle is not installed.")
-    if not (
-        paddle.device.is_compiled_with_cuda()
-        and paddle.device.cuda.device_count() > 0
-    ):
-        return GPUPreflight(False, "PaddlePaddle cannot access CUDA.")
 
     free_bytes, total_bytes = torch.cuda.mem_get_info()
     required_gib = (
@@ -195,38 +190,57 @@ def run_ocr_worker(
     video_ids: tuple[str, ...],
     ocr_retry_level: int,
 ) -> WorkerResult:
-    """Run only OCR, allowing an OOM retry without duplicate frame/clip rows."""
+    """Run OCR in a one-shot child process and read its persisted result.
 
-    os.environ.setdefault("FLAGS_allocator_strategy", "auto_growth")
+    PaddlePaddle can abort during native MKL teardown on some hosts despite
+    completing CUDA inference successfully.  The child explicitly exits after
+    committing its result, so the orchestrator never imports Paddle itself.
+    """
 
-    from BackEnd.app.database.postgre_db import PostgreManager
-    from BackEnd.app.ocr.service import OCRService
-    from BackEnd.app.pipeline.ocr import run_ocr
+    with tempfile.TemporaryDirectory(prefix="aic-ocr-") as directory:
+        result_path = Path(directory) / "result.json"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "BackEnd.app.pipeline.ocr_worker",
+                "--result-path",
+                str(result_path),
+                "--retry-level",
+                str(ocr_retry_level),
+                *video_ids,
+            ],
+            check=False,
+            text=True,
+        )
+        if not result_path.is_file():
+            raise RuntimeError(
+                "OCR worker exited without a result file "
+                f"(returncode={completed.returncode})."
+            )
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
 
-    db = PostgreManager()
-    ocr_service = OCRService(config=_ocr_config_for_retry(ocr_retry_level))
-    completed: list[str] = []
-    try:
-        for video_id in video_ids:
-            try:
-                run_ocr(video_id, db, ocr_service)
-            except Exception as error:
-                if _is_gpu_oom(error):
-                    return WorkerResult(
-                        kind="enrichment",
-                        completed_video_ids=tuple(completed),
-                        oom_video_id=video_id,
-                        oom_message=str(error),
-                        requested_video_ids=video_ids,
-                    )
-                raise
-            completed.append(video_id)
-    finally:
-        _close_resource(ocr_service)
-        db.engine.dispose()
+    completed_video_ids = tuple(payload.get("completed_video_ids", ()))
+    error_message = payload.get("error")
+    if error_message:
+        oom_video_id = payload.get("oom_video_id")
+        if oom_video_id:
+            return WorkerResult(
+                kind="enrichment",
+                completed_video_ids=completed_video_ids,
+                oom_video_id=str(oom_video_id),
+                oom_message=str(error_message),
+                requested_video_ids=video_ids,
+            )
+        raise RuntimeError(f"OCR worker failed: {error_message}")
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "OCR worker reported success but exited with "
+            f"returncode={completed.returncode}."
+        )
     return WorkerResult(
         kind="enrichment",
-        completed_video_ids=tuple(completed),
+        completed_video_ids=completed_video_ids,
         requested_video_ids=video_ids,
     )
 
