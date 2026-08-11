@@ -284,11 +284,13 @@ threshold used for filtering.
 
 ### 7.7 Tracking
 
-Consume a shot and sample frames internally for tracking. Tracking-only samples
-are ephemeral: do not save image files or persist them as normal keyframes.
-Return detections, track summaries, and detection-to-track observations through
-contracts. Record tracker name, version, and configuration needed for
-reproduction.
+Consume a shot and sample frames internally for YOLO26 tracking. Tracking-only
+samples are ephemeral: do not save image files or persist them as normal
+keyframes or object detections. Return track summaries and independent YOLO
+observations through contracts. Each observation stores its frame index,
+timestamp, normalized bounding box, and confidence without referencing
+`ObjectDetection`. Record model, tracker, mapping, sampling, and configuration
+metadata needed for reproduction.
 
 ### 7.8 Clip extraction
 

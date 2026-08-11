@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from datetime import date
 from typing import Any, TypeVar
@@ -13,28 +14,42 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from BackEnd.app.database.adapter import (
+    clip_embedding_mapping_from_record,
     clip_window_metadata_from_clip_window,
+    frame_embedding_mapping_from_record,
     frame_metadata_from_frame,
+    shot_embedding_mapping_from_record,
     shot_metadata_from_shot,
-    video_metadata_from_video
+    video_metadata_from_video,
 )
 from BackEnd.app.database.models import (
     Base,
     Caption,
+    ClassID,
+    ClipEmbeddingRecord,
     ClipWindow,
     Frame,
     FrameEmbeddingRecord,
+    ObjectDetection,
+    ObjectTrack,
     OCR,
     Shot,
+    ShotEmbeddingRecord,
     TranscriptSegment,
+    TrackObservation,
     Video,
 )
 
 from BackEnd.app.contracts.pipeline import (
+    ClipEmbeddingMapping,
     ClipWindowMetadata,
+    FrameEmbeddingMapping,
     FrameMetadata,
+    ObjectTrackResult,
+    ShotEmbeddingMapping,
     ShotMetadata,
-    VideoMetadata
+    TrackObservationResult,
+    VideoMetadata,
 )
 
 load_dotenv()
@@ -257,6 +272,195 @@ class PostgreManager:
             )
             return self._persist(session, ocr)
 
+    def add_class_id(self, class_id: str, class_name: str) -> ClassID:
+        """Insert one object class, or return the matching existing record."""
+
+        with self.session_factory() as session:
+            existing = session.get(ClassID, class_id)
+            if existing is not None:
+                if existing.class_name != class_name:
+                    raise ValueError(
+                        f"ClassID '{class_id}' already has name "
+                        f"'{existing.class_name}', not '{class_name}'."
+                    )
+                return existing
+
+            class_record = ClassID(class_id=class_id, class_name=class_name)
+            return self._persist(session, class_record)
+
+    def add_object_detection(
+        self,
+        frame_id: str,
+        class_id: str,
+        confidence: float,
+        x_min: float,
+        x_max: float,
+        y_min: float,
+        y_max: float,
+        *,
+        model_name: str | None = None,
+        model_version: str | None = None,
+    ) -> ObjectDetection:
+        """Insert one object detection belonging to an existing frame."""
+
+        with self.session_factory() as session:
+            if session.get(Frame, frame_id) is None:
+                raise ValueError(f"Frame '{frame_id}' does not exist.")
+            if session.get(ClassID, class_id) is None:
+                raise ValueError(f"ClassID '{class_id}' does not exist.")
+
+            detection = ObjectDetection(
+                frame_id=frame_id,
+                class_id=class_id,
+                confidence=confidence,
+                x_min=x_min,
+                x_max=x_max,
+                y_min=y_min,
+                y_max=y_max,
+                model_name=model_name,
+                model_version=model_version,
+            )
+            return self._persist(session, detection)
+
+    def add_object_track(
+        self,
+        shot_id: str,
+        class_id: str,
+        start_ms: int,
+        end_ms: int,
+        observation_count: int,
+        *,
+        model_name: str,
+        model_version: str,
+        tracker_name: str,
+        tracker_version: str,
+        sampling_fps: float,
+        mapping_version: str,
+        start_frame_idx: int | None = None,
+        end_frame_idx: int | None = None,
+        avg_confidence: float | None = None,
+    ) -> ObjectTrack:
+        """Insert one object track belonging to an existing shot."""
+
+        with self.session_factory() as session:
+            if session.get(Shot, shot_id) is None:
+                raise ValueError(f"Shot '{shot_id}' does not exist.")
+            if session.get(ClassID, class_id) is None:
+                raise ValueError(f"ClassID '{class_id}' does not exist.")
+
+            track = ObjectTrack(
+                shot_id=shot_id,
+                class_id=class_id,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                start_frame_idx=start_frame_idx,
+                end_frame_idx=end_frame_idx,
+                observation_count=observation_count,
+                avg_confidence=avg_confidence,
+                model_name=model_name,
+                model_version=model_version,
+                tracker_name=tracker_name,
+                tracker_version=tracker_version,
+                sampling_fps=sampling_fps,
+                mapping_version=mapping_version,
+            )
+            return self._persist(session, track)
+
+    def add_track_observation(
+        self,
+        track_id: int,
+        frame_idx: int,
+        timestamp_ms: int,
+        confidence: float,
+        x_min: float,
+        x_max: float,
+        y_min: float,
+        y_max: float,
+    ) -> TrackObservation:
+        """Insert one normalized observation belonging to an object track."""
+
+        with self.session_factory() as session:
+            if session.get(ObjectTrack, track_id) is None:
+                raise ValueError(f"ObjectTrack '{track_id}' does not exist.")
+
+            observation = TrackObservation(
+                track_id=track_id,
+                frame_idx=frame_idx,
+                timestamp_ms=timestamp_ms,
+                confidence=confidence,
+                x_min=x_min,
+                x_max=x_max,
+                y_min=y_min,
+                y_max=y_max,
+            )
+            return self._persist(session, observation)
+
+    def add_tracking_result(
+        self,
+        tracks: list[ObjectTrackResult],
+        observations: list[TrackObservationResult],
+    ) -> list[ObjectTrackResult]:
+        """Insert tracks and their observations in one transaction."""
+
+        if not tracks:
+            if observations:
+                raise ValueError("Tracking observations require at least one track.")
+            return []
+
+        with self.session_factory.begin() as session:
+            track_records = [
+                ObjectTrack(
+                    shot_id=track.shot_id,
+                    class_id=track.class_id,
+                    start_ms=track.start_ms,
+                    end_ms=track.end_ms,
+                    start_frame_idx=track.start_frame_idx,
+                    end_frame_idx=track.end_frame_idx,
+                    observation_count=track.observation_count,
+                    avg_confidence=track.avg_confidence,
+                    model_name=track.model_name,
+                    model_version=track.model_version,
+                    tracker_name=track.tracker_name,
+                    tracker_version=track.tracker_version,
+                    sampling_fps=track.sampling_fps,
+                    mapping_version=track.mapping_version,
+                )
+                for track in tracks
+            ]
+            session.add_all(track_records)
+            session.flush()
+
+            track_id_map: dict[int, int] = {}
+            for track, record in zip(tracks, track_records):
+                if track.track_id is None:
+                    raise ValueError("Tracking result must have a local track_id.")
+                track_id_map[track.track_id] = record.track_id
+
+            try:
+                observation_records = [
+                    TrackObservation(
+                        track_id=track_id_map[observation.track_id],
+                        frame_idx=observation.frame_idx,
+                        timestamp_ms=observation.timestamp_ms,
+                        confidence=observation.confidence,
+                        x_min=observation.x_min,
+                        x_max=observation.x_max,
+                        y_min=observation.y_min,
+                        y_max=observation.y_max,
+                    )
+                    for observation in observations
+                ]
+            except KeyError as exc:
+                raise ValueError(
+                    f"Observation references unknown local track_id: {exc.args[0]}."
+                ) from exc
+            session.add_all(observation_records)
+
+        return [
+            replace(track, track_id=record.track_id)
+            for track, record in zip(tracks, track_records)
+        ]
+
     def add_caption(
         self,
         caption_text: str,
@@ -340,6 +544,208 @@ class PostgreManager:
                 model_name=model_name,
             )
             return self._persist(session, record)
+
+    def add_clip_embedding_record(
+        self,
+        faiss_id: int,
+        index_version: int,
+        clip_id: str,
+        model_name: str,
+    ) -> ClipEmbeddingRecord:
+        """Insert a FAISS mapping for an existing clip window."""
+
+        with self.session_factory() as session:
+            if session.get(ClipWindow, clip_id) is None:
+                raise ValueError(f"Clip '{clip_id}' does not exist.")
+
+            record = ClipEmbeddingRecord(
+                faiss_id=faiss_id,
+                index_version=index_version,
+                clip_id=clip_id,
+                model_name=model_name,
+            )
+            return self._persist(session, record)
+
+    def add_shot_embedding_record(
+        self,
+        faiss_id: int,
+        index_version: int,
+        shot_id: str,
+        model_name: str,
+        model_version: str,
+        *,
+        pooling_method: str = "mean",
+    ) -> ShotEmbeddingRecord:
+        """Insert a FAISS mapping for an existing shot."""
+
+        with self.session_factory() as session:
+            if session.get(Shot, shot_id) is None:
+                raise ValueError(f"Shot '{shot_id}' does not exist.")
+
+            record = ShotEmbeddingRecord(
+                faiss_id=faiss_id,
+                index_version=index_version,
+                shot_id=shot_id,
+                model_name=model_name,
+                model_version=model_version,
+                pooling_method=pooling_method,
+            )
+            return self._persist(session, record)
+
+    def get_frame_embedding_mappings(
+        self,
+        frame_ids: list[str],
+        *,
+        index_version: int,
+        model_name: str,
+    ) -> list[FrameEmbeddingMapping]:
+        """Return existing frame mappings for one FAISS/model version."""
+
+        if not frame_ids:
+            return []
+        with self.session_factory() as session:
+            records = session.scalars(
+                select(FrameEmbeddingRecord).where(
+                    FrameEmbeddingRecord.frame_id.in_(frame_ids),
+                    FrameEmbeddingRecord.index_version == index_version,
+                    FrameEmbeddingRecord.model_name == model_name,
+                )
+            ).all()
+            return [frame_embedding_mapping_from_record(record) for record in records]
+
+    def get_clip_embedding_mappings(
+        self,
+        clip_ids: list[str],
+        *,
+        index_version: int,
+        model_name: str,
+    ) -> list[ClipEmbeddingMapping]:
+        """Return existing clip mappings for one FAISS/model version."""
+
+        if not clip_ids:
+            return []
+        with self.session_factory() as session:
+            records = session.scalars(
+                select(ClipEmbeddingRecord).where(
+                    ClipEmbeddingRecord.clip_id.in_(clip_ids),
+                    ClipEmbeddingRecord.index_version == index_version,
+                    ClipEmbeddingRecord.model_name == model_name,
+                )
+            ).all()
+            return [clip_embedding_mapping_from_record(record) for record in records]
+
+    def get_shot_embedding_mappings(
+        self,
+        shot_ids: list[str],
+        *,
+        index_version: int,
+        model_name: str,
+        model_version: str,
+        pooling_method: str,
+    ) -> list[ShotEmbeddingMapping]:
+        """Return existing shot mappings for one FAISS/model version."""
+
+        if not shot_ids:
+            return []
+        with self.session_factory() as session:
+            records = session.scalars(
+                select(ShotEmbeddingRecord).where(
+                    ShotEmbeddingRecord.shot_id.in_(shot_ids),
+                    ShotEmbeddingRecord.index_version == index_version,
+                    ShotEmbeddingRecord.model_name == model_name,
+                    ShotEmbeddingRecord.model_version == model_version,
+                    ShotEmbeddingRecord.pooling_method == pooling_method,
+                )
+            ).all()
+            return [shot_embedding_mapping_from_record(record) for record in records]
+
+    def add_frame_embedding_records(
+        self,
+        mappings: list[FrameEmbeddingMapping],
+    ) -> None:
+        """Insert frame mappings in one PostgreSQL transaction."""
+
+        if not mappings:
+            return
+        frame_ids = {mapping.frame_id for mapping in mappings}
+        with self.session_factory.begin() as session:
+            existing_ids = set(
+                session.scalars(select(Frame.frame_id).where(Frame.frame_id.in_(frame_ids)))
+            )
+            missing_ids = sorted(frame_ids - existing_ids)
+            if missing_ids:
+                raise ValueError(f"Frames do not exist: {missing_ids[:10]}.")
+            session.add_all(
+                [
+                    FrameEmbeddingRecord(
+                        faiss_id=mapping.faiss_id,
+                        index_version=mapping.index_version,
+                        frame_id=mapping.frame_id,
+                        model_name=mapping.model_name,
+                    )
+                    for mapping in mappings
+                ]
+            )
+
+    def add_clip_embedding_records(
+        self,
+        mappings: list[ClipEmbeddingMapping],
+    ) -> None:
+        """Insert clip mappings in one PostgreSQL transaction."""
+
+        if not mappings:
+            return
+        clip_ids = {mapping.clip_id for mapping in mappings}
+        with self.session_factory.begin() as session:
+            existing_ids = set(
+                session.scalars(
+                    select(ClipWindow.clip_id).where(ClipWindow.clip_id.in_(clip_ids))
+                )
+            )
+            missing_ids = sorted(clip_ids - existing_ids)
+            if missing_ids:
+                raise ValueError(f"Clips do not exist: {missing_ids[:10]}.")
+            session.add_all(
+                [
+                    ClipEmbeddingRecord(
+                        faiss_id=mapping.faiss_id,
+                        index_version=mapping.index_version,
+                        clip_id=mapping.clip_id,
+                        model_name=mapping.model_name,
+                    )
+                    for mapping in mappings
+                ]
+            )
+
+    def add_shot_embedding_records(
+        self,
+        mappings: list[ShotEmbeddingMapping],
+    ) -> None:
+        """Insert shot mappings in one PostgreSQL transaction."""
+
+        if not mappings:
+            return
+        shot_ids = {mapping.shot_id for mapping in mappings}
+        with self.session_factory.begin() as session:
+            existing_ids = set(
+                session.scalars(select(Shot.shot_id).where(Shot.shot_id.in_(shot_ids)))
+            )
+            missing_ids = sorted(shot_ids - existing_ids)
+            if missing_ids:
+                raise ValueError(f"Shots do not exist: {missing_ids[:10]}.")
+            session.add_all(
+                [
+                    ShotEmbeddingRecord(
+                        faiss_id=mapping.faiss_id,
+                        index_version=mapping.index_version,
+                        shot_id=mapping.shot_id,
+                        model_name=mapping.model_name,
+                        model_version=mapping.model_version,
+                        pooling_method=mapping.pooling_method,
+                    )
+                    for mapping in mappings
+                ]
+            )
 
     def get_frame_record_by_frame_id(self, frame_id: str) -> FrameMetadata:
         with self.session_factory() as session:

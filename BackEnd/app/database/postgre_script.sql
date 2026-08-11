@@ -61,7 +61,7 @@ on Frame(video_id, n)
 where source = 'official';
 
 comment on column Frame.frame_path is
-	'NULL for tracking_sample frames when only frame metadata is persisted';
+	'Path to the persisted official or extracted keyframe image.';
 
 create table ClassID (
 	class_id varchar(15) primary key, 
@@ -152,8 +152,12 @@ create table ObjectTrack (
 		avg_confidence between 0 and 1
 	),
 	
-	tracker_name varchar(100),
-	tracker_version varchar(50),
+	model_name varchar(100) not null,
+	model_version varchar(100) not null,
+	tracker_name varchar(100) not null,
+	tracker_version varchar(50) not null,
+	sampling_fps float not null check (sampling_fps > 0),
+	mapping_version varchar(50) not null,
 	
 	foreign key (shot_id) references Shot(shot_id),
 	foreign key (class_id) references ClassID(class_id)
@@ -161,13 +165,19 @@ create table ObjectTrack (
 
 create table TrackObservation (
 	track_id bigint not null,
-	detection_id bigint not null,
+	frame_idx bigint not null check (frame_idx >= 0),
+	timestamp_ms bigint not null check (timestamp_ms >= 0),
+	confidence float not null check (confidence between 0 and 1),
+	x_min float not null check (x_min between 0 and 1),
+	x_max float not null check (x_max between 0 and 1),
+	y_min float not null check (y_min between 0 and 1),
+	y_max float not null check (y_max between 0 and 1),
 	
-	primary key (track_id, detection_id),
-	unique (detection_id),
+	primary key (track_id, frame_idx),
+	check (x_min < x_max),
+	check (y_min < y_max),
 	
-	foreign key (track_id) references ObjectTrack(track_id), 
-	foreign key (detection_id) references ObjectDetection(detection_id)
+	foreign key (track_id) references ObjectTrack(track_id)
 );
 
 create table ClipWindow (

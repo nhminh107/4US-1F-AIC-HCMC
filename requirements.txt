@@ -9,7 +9,7 @@ pillow>=9.5.0
 setuptools<82
 torch>=2.0.0
 torchvision>=0.15.0
-ultralytics>=8.3.0
+ultralytics>=8.4.116,<9.0.0
 transformers>=4.48.0,<6.0.0
 sentence-transformers>=3.0.0
 tqdm>=4.65.0
@@ -28,9 +28,6 @@ sqlalchemy>=2.0.0
 python-dotenv>=1.0.0
 pytest>=8.0.0
 webrtcvad>=2.0.10
-ultralytics
-trackers==2.6.0
-supervision==0.30.0
 tensorflow[and-cuda]>=2.16,<2.19
 tensorflow-hub>=0.16,<0.17
 chunkformer

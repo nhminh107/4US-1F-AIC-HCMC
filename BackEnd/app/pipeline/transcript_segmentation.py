@@ -29,5 +29,4 @@ if __name__ == "__main__":
     asr_model = ASR_Model()
 
     videos = db.get_list_video()
-    for i in range(len(videos)):
-        run_asr_model(videos[i], db, asr_model)
+    run_asr_model(videos[69], db, asr_model)

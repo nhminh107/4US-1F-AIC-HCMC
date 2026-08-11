@@ -1,4 +1,4 @@
-"""Opt-in smoke test: one local video -> shots -> ByteTrack results."""
+"""Opt-in GPU smoke test for YOLO26 tracking on a short video range."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from pathlib import Path
 from pprint import pprint
 
 from BackEnd.app.contracts.pipeline import (
-    ObjectDetectionResult,
     ObjectTrackResult,
     ShotMetadata,
     TrackObservationResult,
@@ -27,7 +26,7 @@ RUN_SMOKE_TEST = os.environ.get("RUN_VIDEO_TO_TRACKING_SMOKE") == "1"
     "Set RUN_VIDEO_TO_TRACKING_SMOKE=1 to run real video inference.",
 )
 class VideoToShotToTrackSmokeTests(unittest.TestCase):
-    """Runs the real ShotExtractor and detector on one local video."""
+    """Runs real YOLO26 tracking without invoking unrelated pipeline models."""
 
     def test_video_to_shot_to_track(self) -> None:
         video_path = Path(
@@ -35,25 +34,37 @@ class VideoToShotToTrackSmokeTests(unittest.TestCase):
         ).resolve()
         self.assertTrue(video_path.is_file(), f"Video not found: {video_path}")
 
-        # Heavy imports stay inside the opt-in test so normal unit-test discovery is fast.
-        from BackEnd.app.shot_extractor import ShotExtractor
+        # Heavy imports stay inside the opt-in test so unit-test discovery stays fast.
         from BackEnd.app.tracking import ByteTrackService, TrackingConfig
 
         video = VideoMetadata(video_id=video_path.stem, video_path=video_path)
-        shots = ShotExtractor().extract(video.video_id)
-        self.assertGreater(len(shots), 0, "ShotExtractor returned no shots.")
-
-        max_shots = int(os.environ.get("VIDEO_TO_TRACKING_MAX_SHOTS", "1"))
-        selected_shots = shots[:max_shots] if max_shots > 0 else shots
+        duration_ms = int(os.environ.get("VIDEO_TO_TRACKING_DURATION_MS", "10000"))
+        self.assertGreater(duration_ms, 0)
+        selected_shots = [
+            ShotMetadata(
+                shot_id="tracking-smoke",
+                video_id=video.video_id,
+                shot_index=0,
+                start_ms=0,
+                end_ms=duration_ms,
+            )
+        ]
         sampling_fps = float(os.environ.get("VIDEO_TO_TRACKING_SAMPLING_FPS", "1"))
+        model_path = Path(
+            os.environ.get(
+                "VIDEO_TO_TRACKING_MODEL_PATH",
+                str(PROJECT_ROOT / "data/models/yolo26n.pt"),
+            )
+        )
         result = ByteTrackService(
-            config=TrackingConfig(sampling_fps=sampling_fps),
+            config=TrackingConfig(
+                model_path=model_path,
+                sampling_fps=sampling_fps,
+                device=os.environ.get("VIDEO_TO_TRACKING_DEVICE", "cuda:0"),
+            ),
         ).track_video(video, selected_shots)
 
         self.assertTrue(all(isinstance(item, ShotMetadata) for item in selected_shots))
-        self.assertTrue(
-            all(isinstance(item, ObjectDetectionResult) for item in result.detections)
-        )
         self.assertTrue(all(isinstance(item, ObjectTrackResult) for item in result.tracks))
         self.assertTrue(
             all(isinstance(item, TrackObservationResult) for item in result.observations)
@@ -66,16 +77,14 @@ class VideoToShotToTrackSmokeTests(unittest.TestCase):
 
         print("\n=== ShotMetadata ===")
         pprint([asdict(shot) for shot in selected_shots])
-        print("\n=== ObjectDetectionResult (first 10) ===")
-        pprint([asdict(item) for item in result.detections[:10]])
         print("\n=== ObjectTrackResult ===")
         pprint([asdict(track) for track in result.tracks])
         print("\n=== TrackObservationResult (first 20) ===")
         pprint([asdict(item) for item in result.observations[:20]])
         print(
             "\nSummary: "
-            f"shots={len(selected_shots)}, detections={len(result.detections)}, "
-            f"tracks={len(result.tracks)}, observations={len(result.observations)}"
+            f"shots={len(selected_shots)}, tracks={len(result.tracks)}, "
+            f"observations={len(result.observations)}"
         )
 
 
