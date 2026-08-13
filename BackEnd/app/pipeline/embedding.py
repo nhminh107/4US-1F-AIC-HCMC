@@ -43,6 +43,9 @@ class EmbeddingPipeline:
             clip_service = ClipEmbeddingService(
                 decoder=PyAVVideoDecoder(),
                 model_adapter=shared_adapter,
+                # Two bounded decoder workers overlap CPU decode with GPU encoding.
+                num_workers=2,
+                max_clips_per_unit=64,
             )
         else:
             shared_adapter = getattr(clip_service, "model_adapter", None)
@@ -120,12 +123,13 @@ class EmbeddingPipeline:
     def embed_clips(self, video_id: str) -> list[ClipEmbeddingMapping]:
         """Embed persisted clip windows of one video and save their mappings."""
 
-        clip_vectors, _, clip_metadata = self._get_clip_embeddings(video_id)
-        if not clip_metadata:
+        _, clip_records, clips_by_id = _load_video_clips(video_id, self.db)
+        persisted_clips = [clips_by_id[record.clip_id] for record in clip_records]
+        if not persisted_clips:
             return []
 
         existing = self.db.get_clip_embedding_mappings(
-            [clip.clip_id for clip in clip_metadata],
+            [clip.clip_id for clip in persisted_clips],
             index_version=self.faiss_manager.version,
             model_name=self.faiss_manager.model_name,
         )
@@ -133,14 +137,15 @@ class EmbeddingPipeline:
             "clip", [mapping.faiss_id for mapping in existing]
         )
         existing_by_clip = {mapping.clip_id: mapping for mapping in existing}
+        if len(existing_by_clip) == len(persisted_clips):
+            return [existing_by_clip[clip.clip_id] for clip in persisted_clips]
+
+        clip_vectors, _, clip_metadata = self._get_clip_embeddings(video_id)
         pending_positions = [
             index
             for index, clip in enumerate(clip_metadata)
             if clip.clip_id not in existing_by_clip
         ]
-        if not pending_positions:
-            return [existing_by_clip[clip.clip_id] for clip in clip_metadata]
-
         pending_vectors = clip_vectors[pending_positions]
         pending_clips = [clip_metadata[index] for index in pending_positions]
         _, new_mappings, _ = self.faiss_manager.add_and_save(
@@ -183,11 +188,12 @@ class EmbeddingPipeline:
         if not pending_shots:
             return [existing_by_shot[shot.shot_id] for shot in shots]
 
-        clip_vectors, clip_records, _ = self._get_clip_embeddings(video_id)
+        _, clip_records, _ = _load_video_clips(video_id, self.db)
         if not clip_records:
             return []
 
-        shot_vectors, records = self.shot_service.aggregate_shots_to_matrix(
+        clip_vectors = self._get_clip_vectors_for_shots(video_id, clip_records)
+        shot_vectors, records = self.shot_service.aggregate_clip_records_to_matrix(
             shots=pending_shots,
             clip_records=clip_records,
             clip_vectors=clip_vectors,
@@ -211,6 +217,49 @@ class EmbeddingPipeline:
             **{mapping.shot_id: mapping for mapping in new_mappings},
         }
         return [mappings_by_shot[shot.shot_id] for shot in shots]
+
+    def release_video_cache(self, video_id: str) -> None:
+        """Release vectors after that video's clip and shot records are durable."""
+
+        self._clip_cache.pop(video_id, None)
+
+    def _get_clip_vectors_for_shots(
+        self,
+        video_id: str,
+        clip_records: list[ClipRecord],
+    ) -> np.ndarray:
+        """Use RAM cache when present, otherwise reconstruct durable FAISS vectors."""
+
+        cached = self._clip_cache.get(video_id)
+        if cached is not None:
+            cached_vectors, _, cached_metadata = cached
+            vectors_by_clip = {
+                metadata.clip_id: cached_vectors[index]
+                for index, metadata in enumerate(cached_metadata)
+            }
+            if all(clip.clip_id in vectors_by_clip for clip in clip_records):
+                return np.asarray(
+                    [vectors_by_clip[clip.clip_id] for clip in clip_records],
+                    dtype=np.float32,
+                )
+
+        mappings = self.db.get_clip_embedding_mappings(
+            [clip.clip_id for clip in clip_records],
+            index_version=self.faiss_manager.version,
+            model_name=self.faiss_manager.model_name,
+        )
+        mappings_by_clip = {mapping.clip_id: mapping for mapping in mappings}
+        missing_clips = [
+            clip.clip_id for clip in clip_records if clip.clip_id not in mappings_by_clip
+        ]
+        if missing_clips:
+            raise RuntimeError(
+                "Cannot embed shots because clip mappings are missing: "
+                f"{missing_clips[:10]}."
+            )
+        return self.faiss_manager.reconstruct_clip_vectors(
+            [mappings_by_clip[clip.clip_id].faiss_id for clip in clip_records]
+        )
 
     def _require_clip_service(self) -> ClipEmbeddingService:
         return self.clip_service

@@ -51,8 +51,8 @@ class _TrackAccumulator:
         self.observation_count += 1
 
 
-def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, np.ndarray]]:
-    """Yield ``(timestamp_ms, frame_idx, BGR image)`` in decode order."""
+def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, Any]]:
+    """Yield decoded frames without converting non-sampled frames to BGR."""
 
     with av.open(str(video_path)) as container:
         stream = container.streams.video[0]
@@ -62,7 +62,16 @@ def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, np.ndarray]
                 timestamp_ms = round(float(frame.pts * frame.time_base) * 1_000)
             else:
                 timestamp_ms = round(decoded_index / average_rate * 1_000)
-            yield timestamp_ms, decoded_index, frame.to_ndarray(format="bgr24")
+            yield timestamp_ms, decoded_index, frame
+
+
+def _to_bgr_image(frame: Any) -> np.ndarray:
+    """Convert a sampled PyAV frame to BGR while supporting array-based tests."""
+
+    to_ndarray = getattr(frame, "to_ndarray", None)
+    if callable(to_ndarray):
+        return np.asarray(to_ndarray(format="bgr24"))
+    return np.asarray(frame)
 
 
 def _as_numpy(value: Any) -> np.ndarray:
@@ -248,7 +257,7 @@ class YOLOTrackingService:
                     )
             sampled_batch.clear()
 
-        for timestamp_ms, frame_idx, image in _iter_video_frames(video_path):
+        for timestamp_ms, frame_idx, decoded_frame in _iter_video_frames(video_path):
             shot = advance_to_shot(timestamp_ms)
             if shot is None:
                 if shot_index >= len(ordered_shots):
@@ -265,6 +274,7 @@ class YOLOTrackingService:
                 self._reset_tracker_state()
                 active_shot_id = shot.shot_id
 
+            image = _to_bgr_image(decoded_frame)
             sampled_batch.append((shot, timestamp_ms, frame_idx, image))
             if len(sampled_batch) >= self.config.batch_size:
                 flush_batch()

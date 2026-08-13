@@ -206,6 +206,17 @@ class FAISS_Manager:
                 f"{missing_ids[:10]}."
             )
 
+    def reconstruct_clip_vectors(self, faiss_ids: list[int]) -> np.ndarray:
+        """Return persisted clip vectors in exactly the requested ID order."""
+
+        if not faiss_ids:
+            return np.empty((0, self.clip_idx.d), dtype=np.float32)
+        self.validate_ids("clip", faiss_ids)
+        return np.asarray(
+            [self.clip_idx.reconstruct(int(faiss_id)) for faiss_id in faiss_ids],
+            dtype=np.float32,
+        )
+
     @staticmethod
     def _remove_mappings(index, mappings) -> None:
         ids = np.asarray([mapping.faiss_id for mapping in mappings], dtype=np.int64)

@@ -101,7 +101,8 @@ class VietOCRTextRecognizer:
             )
         else:
             vietocr_config = Cfg.load_config_from_name(config.recognition_model_name)
-        vietocr_config["device"] = _paddle_to_torch_device(device)
+        torch_device = _paddle_to_torch_device(device)
+        vietocr_config["device"] = torch_device
         if config.recognition_model_dir is not None:
             weights_path = config.recognition_model_dir.expanduser().resolve()
             if not weights_path.is_file():
@@ -112,6 +113,10 @@ class VietOCRTextRecognizer:
 
         self._predictor = Predictor(vietocr_config)
         self._predictor.model.eval()
+        self._use_fp16 = config.precision == "fp16" and torch_device.startswith(
+            "cuda"
+        )
+        self._autocast_device_type = torch_device.split(":", maxsplit=1)[0]
 
     def recognize(
         self,
@@ -127,7 +132,13 @@ class VietOCRTextRecognizer:
 
         pil_images = [Image.fromarray(image[:, :, ::-1]) for image in images]
         recognized: list[RecognizedText] = []
-        with torch.inference_mode():
+        use_fp16 = getattr(self, "_use_fp16", False)
+        autocast_device_type = getattr(self, "_autocast_device_type", "cuda")
+        with torch.inference_mode(), torch.autocast(
+            device_type=autocast_device_type,
+            dtype=torch.float16,
+            enabled=use_fp16,
+        ):
             for start in range(0, len(pil_images), batch_size):
                 texts, probabilities = self._predictor.predict_batch(
                     pil_images[start : start + batch_size],

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from BackEnd.app.contracts.pipeline import FrameMetadata
+from BackEnd.app.contracts.pipeline import ClipWindowMetadata, FrameMetadata
 from BackEnd.app.database.faiss_db import FAISS_Manager
 
 
@@ -72,3 +72,24 @@ def test_failed_save_restores_the_persisted_index(
 
     reloaded = FAISS_Manager(2, 2, 2, data_path=tmp_path)
     assert reloaded.frame_idx.ntotal == 1
+
+
+def test_reconstruct_clip_vectors_keeps_requested_mapping_order(tmp_path: Path) -> None:
+    manager = FAISS_Manager(2, 2, 2, data_path=tmp_path)
+    clips = [
+        ClipWindowMetadata("clip-1", "shot-1", 0, 1_000),
+        ClipWindowMetadata("clip-2", "shot-1", 1_000, 2_000),
+    ]
+    _, mappings, _ = manager.add_and_save(
+        clips=np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        clips_model=clips,
+    )
+
+    vectors = manager.reconstruct_clip_vectors(
+        [mappings[1].faiss_id, mappings[0].faiss_id]
+    )
+
+    np.testing.assert_allclose(
+        vectors,
+        np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+    )

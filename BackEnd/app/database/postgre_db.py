@@ -46,6 +46,7 @@ from BackEnd.app.contracts.pipeline import (
     FrameEmbeddingMapping,
     FrameMetadata,
     ObjectTrackResult,
+    OCRResult,
     ShotEmbeddingMapping,
     ShotMetadata,
     TrackObservationResult,
@@ -271,6 +272,44 @@ class PostgreManager:
                 y_max=y_max,
             )
             return self._persist(session, ocr)
+
+    def add_ocr_records(self, results: list[OCRResult]) -> None:
+        """Insert one video's OCR results in a single transaction."""
+
+        if not results:
+            return
+
+        frame_ids = {result.frame_id for result in results}
+        result_keys = [(result.frame_id, result.n) for result in results]
+        if len(result_keys) != len(set(result_keys)):
+            raise ValueError("OCR results contain duplicate (frame_id, n) keys.")
+
+        with self.session_factory.begin() as session:
+            existing_frame_ids = set(
+                session.scalars(
+                    select(Frame.frame_id).where(Frame.frame_id.in_(frame_ids))
+                )
+            )
+            missing_frame_ids = sorted(frame_ids - existing_frame_ids)
+            if missing_frame_ids:
+                raise ValueError(
+                    f"OCR frames do not exist: {missing_frame_ids[:10]}."
+                )
+            session.add_all(
+                [
+                    OCR(
+                        frame_id=result.frame_id,
+                        n=result.n,
+                        text=result.text,
+                        language=result.language,
+                        x_min=result.x_min,
+                        x_max=result.x_max,
+                        y_min=result.y_min,
+                        y_max=result.y_max,
+                    )
+                    for result in results
+                ]
+            )
 
     def add_class_id(self, class_id: str, class_name: str) -> ClassID:
         """Insert one object class, or return the matching existing record."""

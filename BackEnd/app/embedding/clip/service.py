@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import gc
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterator
 
 import numpy as np
 
@@ -36,7 +37,9 @@ class ClipEmbeddingService:
         artifact_writer: EmbeddingArtifactWriter | None = None,
         decode_tolerance_ms: int = CONFIG.DECODE_TOLERANCE_MS,
         num_workers: int = 1,
+        prefetch_queue_size: int | None = None,
         enable_gc: bool = True,
+        max_clips_per_unit: int | None = None,
     ) -> None:
         self.decoder = decoder
         self.model_adapter = model_adapter
@@ -44,7 +47,14 @@ class ClipEmbeddingService:
         self.artifact_writer = artifact_writer
         self.decode_tolerance_ms = decode_tolerance_ms
         self.num_workers = max(1, int(num_workers))
+        self.prefetch_queue_size = max(
+            1,
+            int(prefetch_queue_size or self.num_workers),
+        )
         self.enable_gc = enable_gc
+        if max_clips_per_unit is not None and max_clips_per_unit <= 0:
+            raise ValueError("max_clips_per_unit must be positive when provided.")
+        self.max_clips_per_unit = max_clips_per_unit
 
     def embed_clips(
         self,
@@ -58,36 +68,23 @@ class ClipEmbeddingService:
         failures: list[EmbeddingRecord] = []
         dimension = self._resolve_dimension()
 
-        work_units = list(plan_video_work(clips, video_assets))
+        work_units = list(
+            plan_video_work(
+                clips,
+                video_assets,
+                max_clips_per_unit=self.max_clips_per_unit,
+            )
+        )
 
-        decoded_map = {}
-        valid_work_units = [unit for unit in work_units if unit.video_asset is not None]
-        if self.num_workers > 1 and valid_work_units:
-            def _decode_unit(unit):
-                return unit.video_asset.video_id, self.decoder.decode_nearest_frames(
-                    unit.video_asset,
-                    unit.unique_timestamps_ms,
-                )
-
-            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-                results = executor.map(_decode_unit, valid_work_units)
-                for video_id, decoded_batch in results:
-                    decoded_map[video_id] = decoded_batch
-
-        for work_unit in work_units:
+        for work_unit, decoded in self._iter_decoded_work_units(work_units):
             video_asset = work_unit.video_asset
             if video_asset is None:
                 for clip in work_unit.sorted_clip_records:
                     failures.append(self._failure_record(clip, CONFIG.EmbeddingStatus.MEDIA_NOT_FOUND, "video asset not resolved"))
                 continue
 
-            if video_asset.video_id in decoded_map:
-                decoded = decoded_map[video_asset.video_id]
-            else:
-                decoded = self.decoder.decode_nearest_frames(
-                    video_asset,
-                    work_unit.unique_timestamps_ms,
-                )
+            if decoded is None:
+                raise RuntimeError("Valid video work unit is missing decoded frames.")
             requested_to_vector: dict[int, np.ndarray] = {}
             requested_to_actual: dict[int, int | None] = {}
             valid_images = []
@@ -195,36 +192,23 @@ class ClipEmbeddingService:
         failures: list[EmbeddingRecord] = []
         dimension = self._resolve_dimension()
 
-        work_units = list(plan_video_work(clips, video_assets))
+        work_units = list(
+            plan_video_work(
+                clips,
+                video_assets,
+                max_clips_per_unit=self.max_clips_per_unit,
+            )
+        )
 
-        decoded_map = {}
-        valid_work_units = [unit for unit in work_units if unit.video_asset is not None]
-        if self.num_workers > 1 and valid_work_units:
-            def _decode_unit(unit):
-                return unit.video_asset.video_id, self.decoder.decode_nearest_frames(
-                    unit.video_asset,
-                    unit.unique_timestamps_ms,
-                )
-
-            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-                results = executor.map(_decode_unit, valid_work_units)
-                for video_id, decoded_batch in results:
-                    decoded_map[video_id] = decoded_batch
-
-        for work_unit in work_units:
+        for work_unit, decoded in self._iter_decoded_work_units(work_units):
             video_asset = work_unit.video_asset
             if video_asset is None:
                 for clip in work_unit.sorted_clip_records:
                     failures.append(self._failure_record(clip, CONFIG.EmbeddingStatus.MEDIA_NOT_FOUND, "video asset not resolved"))
                 continue
 
-            if video_asset.video_id in decoded_map:
-                decoded = decoded_map[video_asset.video_id]
-            else:
-                decoded = self.decoder.decode_nearest_frames(
-                    video_asset,
-                    work_unit.unique_timestamps_ms,
-                )
+            if decoded is None:
+                raise RuntimeError("Valid video work unit is missing decoded frames.")
             requested_to_vector: dict[int, np.ndarray] = {}
             requested_to_actual: dict[int, int | None] = {}
             valid_images = []
@@ -310,6 +294,50 @@ class ClipEmbeddingService:
             else np.empty((0, dimension), dtype=np.float32)
         )
         return vector_matrix, records + failures
+
+    def _iter_decoded_work_units(self, work_units) -> Iterator[tuple[object, object | None]]:
+        """Yield ordered work units while keeping at most a bounded decode queue."""
+
+        if self.num_workers == 1:
+            for work_unit in work_units:
+                decoded = (
+                    self.decoder.decode_nearest_frames(
+                        work_unit.video_asset,
+                        work_unit.unique_timestamps_ms,
+                    )
+                    if work_unit.video_asset is not None
+                    else None
+                )
+                yield work_unit, decoded
+            return
+
+        def decode(work_unit):
+            if work_unit.video_asset is None:
+                return None
+            return self.decoder.decode_nearest_frames(
+                work_unit.video_asset,
+                work_unit.unique_timestamps_ms,
+            )
+
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            pending: dict[int, object] = {}
+            next_index = 0
+
+            def fill_prefetch_queue() -> None:
+                nonlocal next_index
+                while (
+                    next_index < len(work_units)
+                    and len(pending) < self.prefetch_queue_size
+                ):
+                    pending[next_index] = executor.submit(decode, work_units[next_index])
+                    next_index += 1
+
+            fill_prefetch_queue()
+            for index, work_unit in enumerate(work_units):
+                future = pending.pop(index)
+                decoded = future.result()
+                fill_prefetch_queue()
+                yield work_unit, decoded
 
     def _resolve_dimension(self) -> int:
         if self.artifact_writer is not None:

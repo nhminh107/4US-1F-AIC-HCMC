@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
 from BackEnd.app.contracts.embedding import DecodedFrameBatch, VideoAsset
 from BackEnd import CONFIG
 from BackEnd.app.embedding.common.errors import DecodeError, MediaNotFoundError
@@ -64,23 +67,14 @@ class PyAVVideoDecoder:
                     try:
                         target_pts = int((group_start_ms / 1000.0) / time_base)
                         container.seek(target_pts, any_frame=False, backward=True, stream=stream)
-                        candidates = []
-                        for frame in container.decode(stream):
-                            if frame.pts is None:
-                                continue
-                            actual_ms = int(round(float(frame.pts * stream.time_base) * 1000))
-                            if actual_ms > group_end_ms:
-                                break
-                            decoded_frame_count += 1
-                            if actual_ms >= group_start_ms:
-                                candidates.append((actual_ms, frame.to_ndarray(format="rgb24")))
-                        for requested_ms in group:
-                            if not candidates:
-                                continue
-                            actual_ms, image = min(
-                                candidates,
-                                key=lambda item: abs(item[0] - requested_ms),
-                            )
+                        selected, decoded_count = _select_nearest_frames(
+                            _iter_timestamped_frames(container.decode(stream), stream),
+                            group,
+                            start_ms=group_start_ms,
+                            end_ms=group_end_ms,
+                        )
+                        decoded_frame_count += decoded_count
+                        for requested_ms, (actual_ms, image) in selected.items():
                             image_by_timestamp[requested_ms] = image
                             actual_by_timestamp[requested_ms] = actual_ms
                             status_by_timestamp[requested_ms] = "success"
@@ -90,23 +84,17 @@ class PyAVVideoDecoder:
                         fallback_scan_count += 1
                         try:
                             container.seek(0, any_frame=False, stream=stream)
-                            candidates = []
-                            for frame in container.decode(stream):
-                                if frame.pts is None:
-                                    continue
-                                actual_ms = int(round(float(frame.pts * stream.time_base) * 1000))
-                                if actual_ms > group_end_ms:
-                                    break
-                                decoded_frame_count += 1
-                                if actual_ms >= group_start_ms:
-                                    candidates.append((actual_ms, frame.to_ndarray(format="rgb24")))
-                            for requested_ms in group:
-                                if not candidates:
-                                    continue
-                                actual_ms, image = min(
-                                    candidates,
-                                    key=lambda item: abs(item[0] - requested_ms),
-                                )
+                            selected, decoded_count = _select_nearest_frames(
+                                _iter_timestamped_frames(
+                                    container.decode(stream),
+                                    stream,
+                                ),
+                                group,
+                                start_ms=group_start_ms,
+                                end_ms=group_end_ms,
+                            )
+                            decoded_frame_count += decoded_count
+                            for requested_ms, (actual_ms, image) in selected.items():
                                 image_by_timestamp[requested_ms] = image
                                 actual_by_timestamp[requested_ms] = actual_ms
                                 status_by_timestamp[requested_ms] = "success"
@@ -135,6 +123,66 @@ class PyAVVideoDecoder:
                 "failed_frame_count": sum(status != "success" for status in statuses),
             },
         )
+
+
+def _iter_timestamped_frames(frames: Iterable[Any], stream: Any):
+    """Yield decoded frames with their millisecond timestamps."""
+
+    for frame in frames:
+        if frame.pts is None:
+            continue
+        actual_ms = int(round(float(frame.pts * stream.time_base) * 1_000))
+        yield actual_ms, frame
+
+
+def _select_nearest_frames(
+    frames: Iterable[tuple[int, Any]],
+    requested_timestamps_ms: list[int] | tuple[int, ...],
+    *,
+    start_ms: int,
+    end_ms: int,
+) -> tuple[dict[int, tuple[int, Any]], int]:
+    """Select nearest decoded frames without materializing intermediate RGB images."""
+
+    requested = tuple(sorted(set(int(value) for value in requested_timestamps_ms)))
+    selected: dict[int, tuple[int, Any]] = {}
+    image_cache: dict[int, Any] = {}
+    previous: tuple[int, Any] | None = None
+    requested_index = 0
+    decoded_count = 0
+
+    def select(requested_ms: int, candidate: tuple[int, Any]) -> None:
+        actual_ms, frame = candidate
+        image = image_cache.get(actual_ms)
+        if image is None:
+            image = frame.to_ndarray(format="rgb24")
+            image_cache[actual_ms] = image
+        selected[requested_ms] = (actual_ms, image)
+
+    for actual_ms, frame in frames:
+        if actual_ms < start_ms:
+            continue
+        if actual_ms > end_ms:
+            break
+        decoded_count += 1
+        current = (actual_ms, frame)
+        while requested_index < len(requested) and actual_ms >= requested[requested_index]:
+            requested_ms = requested[requested_index]
+            candidate = current
+            if previous is not None and abs(previous[0] - requested_ms) <= abs(
+                actual_ms - requested_ms
+            ):
+                candidate = previous
+            select(requested_ms, candidate)
+            requested_index += 1
+        previous = current
+
+    if previous is not None:
+        while requested_index < len(requested):
+            select(requested[requested_index], previous)
+            requested_index += 1
+
+    return selected, decoded_count
 
 
 def _group_timestamps(timestamps_ms: list[int], max_gap_ms: int) -> list[list[int]]:

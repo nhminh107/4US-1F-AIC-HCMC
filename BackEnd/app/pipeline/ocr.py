@@ -15,6 +15,7 @@ def run_ocr(
     service: OCRService,
     *,
     frame_chunk_size: int = OCR_FRAME_CHUNK_SIZE,
+    frame_source: str | None = None,
 ) -> list[OCRResult]:
     """Run OCR on one video's frames in bounded-memory chunks."""
 
@@ -22,6 +23,8 @@ def run_ocr(
         raise ValueError("frame_chunk_size must be positive.")
 
     frames = db.get_frame_record_by_video_id(video_id)
+    if frame_source is not None:
+        frames = [frame for frame in frames if frame.source == frame_source]
     all_results: list[OCRResult] = []
     for start in range(0, len(frames), frame_chunk_size):
         results = run_ocr_batch(
@@ -32,17 +35,7 @@ def run_ocr(
 
     # Persist only after all chunks finish. An OOM during inference can then be
     # retried in a new worker without violating OCR's (frame_id, n) key.
-    for result in all_results:
-        db.add_ocr(
-            frame_id=result.frame_id,
-            n=result.n,
-            text=result.text,
-            x_min=result.x_min,
-            x_max=result.x_max,
-            y_min=result.y_min,
-            y_max=result.y_max,
-            language=result.language,
-        )
+    db.add_ocr_records(all_results)
 
     return all_results
 

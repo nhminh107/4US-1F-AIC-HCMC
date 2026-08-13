@@ -90,7 +90,11 @@ class ClipViTB32Adapter:
                     raise
         raise RuntimeError("Failed to encode texts due to OOM")
 
-    def encode_images(self, images: Sequence[object], batch_size: int = 64) -> np.ndarray:
+    def encode_images(
+        self,
+        images: Sequence[object],
+        batch_size: int = CONFIG.batch_size,
+    ) -> np.ndarray:
         if not images:
             return np.empty((0, self.dimension), dtype=np.float32)
 

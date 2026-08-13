@@ -176,6 +176,54 @@ class ShotEmbeddingService:
         gc.collect()
         return vector_matrix, records + failures
 
+    def aggregate_clip_records_to_matrix(
+        self,
+        *,
+        shots: list[ShotMetadata],
+        clip_records: list[ClipRecord],
+        clip_vectors: np.ndarray,
+    ) -> tuple[np.ndarray, list[EmbeddingRecord]]:
+        """Aggregate persisted clip vectors without requiring clip artifacts."""
+
+        if len(clip_records) != len(clip_vectors):
+            raise ValueError("clip_records and clip_vectors must have the same length.")
+        records_by_shot: dict[str, list[tuple[ClipRecord, np.ndarray]]] = {}
+        for clip, vector in zip(clip_records, clip_vectors):
+            records_by_shot.setdefault(clip.shot_id, []).append((clip, vector))
+
+        vectors: list[np.ndarray] = []
+        records: list[EmbeddingRecord] = []
+        failures: list[EmbeddingRecord] = []
+        for shot in shots:
+            sources = records_by_shot.get(shot.shot_id, [])
+            if not sources:
+                failures.append(self._failure_record(shot, "no compatible clip embeddings for shot"))
+                continue
+            source_clips = [clip for clip, _ in sources]
+            source_vectors = np.asarray([vector for _, vector in sources], dtype=np.float32)
+            try:
+                shot_vector = aggregate_shot_clips(source_clips, source_vectors)
+            except ValueError as error:
+                failures.append(self._failure_record(shot, str(error)))
+                continue
+            vector_row = len(vectors)
+            vectors.append(shot_vector)
+            records.append(
+                self._success_record(
+                    shot,
+                    shot_vector,
+                    tuple(clip.clip_id for clip in source_clips),
+                    vector_row,
+                )
+            )
+
+        vector_matrix = (
+            np.asarray(vectors, dtype=np.float32)
+            if vectors
+            else np.empty((0, clip_vectors.shape[1]), dtype=np.float32)
+        )
+        return vector_matrix, records + failures
+
     @staticmethod
     def _validate_clip_artifact_compatibility(
         manifest: EmbeddingArtifactManifest,

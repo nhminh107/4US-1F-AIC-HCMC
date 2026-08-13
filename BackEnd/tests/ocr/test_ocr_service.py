@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import nullcontext
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Sequence
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -406,6 +408,26 @@ class VietOCRTextRecognizerTests(unittest.TestCase):
 
         self.assertEqual(predictor.chunk_sizes, [2, 2, 1])
         self.assertEqual(results, [RecognizedText("text", 0.9)] * 5)
+
+    def test_fp16_recognition_enables_cuda_autocast(self) -> None:
+        import torch
+
+        predictor = FakeVietOCRPredictor()
+        recognizer = object.__new__(VietOCRTextRecognizer)
+        recognizer._predictor = predictor
+        recognizer._use_fp16 = True
+        recognizer._autocast_device_type = "cuda"
+        images = [np.zeros((10, 30, 3), dtype=np.uint8)]
+
+        with patch("torch.autocast", return_value=nullcontext()) as autocast:
+            results = recognizer.recognize(images, batch_size=1)
+
+        autocast.assert_called_once_with(
+            device_type="cuda",
+            dtype=torch.float16,
+            enabled=True,
+        )
+        self.assertEqual(results, [RecognizedText("text", 0.9)])
 
 
 if __name__ == "__main__":

@@ -329,11 +329,11 @@ class _FailingClipService(_FakeClipService):
 
 
 class _FakeShotService:
-    def aggregate_shots_to_matrix(
+    def aggregate_clip_records_to_matrix(
         self,
         *,
         shots: list[ShotMetadata],
-        clip_records: list[EmbeddingRecord],
+        clip_records: list[object],
         clip_vectors: np.ndarray,
     ) -> tuple[np.ndarray, list[EmbeddingRecord]]:
         shot = shots[0]
