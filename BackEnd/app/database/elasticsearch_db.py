@@ -246,6 +246,14 @@ class ElasticsearchManager:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Force merge on '%s' failed (non-fatal): %s", index_name, exc)
 
+    def ensure_index(self, index_name: str) -> bool:
+        """Create the physical index with custom schema mappings if it does not exist."""
+
+        if not self.client.indices.exists(index=index_name):
+            self.create_index(index_name)
+            return True
+        return False
+
     def publish_source_aliases(self, index_name: str) -> None:
         """Atomically point source-specific filtered aliases at one index."""
 

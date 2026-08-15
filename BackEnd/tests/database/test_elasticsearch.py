@@ -40,6 +40,10 @@ class FakeIndicesClient:
         self.deleted.append(kwargs)
         return {"acknowledged": True}
 
+    def exists(self, **kwargs) -> bool:
+        target_index = kwargs.get("index")
+        return any(c.get("index") == target_index for c in self.created)
+
 
 class FakeElasticsearchClient:
     def __init__(self, *, search_response: dict | None = None) -> None:
@@ -196,6 +200,18 @@ class ElasticsearchManagerTests(unittest.TestCase):
         self.assertEqual(properties["regions"]["type"], "nested")
         self.assertEqual(properties["keywords"]["type"], "text")
         self.assertEqual(properties["keywords"]["fields"]["raw"]["type"], "keyword")
+
+    def test_ensure_index_creates_only_when_missing(self) -> None:
+        client = FakeElasticsearchClient()
+        manager = ElasticsearchManager(client=client)
+
+        created_first = manager.ensure_index("aic_hcm2026_text_v1_ensure_test")
+        self.assertTrue(created_first)
+        self.assertEqual(len(client.indices.created), 1)
+
+        created_second = manager.ensure_index("aic_hcm2026_text_v1_ensure_test")
+        self.assertFalse(created_second)
+        self.assertEqual(len(client.indices.created), 1)
 
     def test_publish_source_aliases_swaps_filtered_aliases_atomically(self) -> None:
         client = FakeElasticsearchClient()
