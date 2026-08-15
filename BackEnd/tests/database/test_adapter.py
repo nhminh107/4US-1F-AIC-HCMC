@@ -3,12 +3,19 @@
 import unittest
 from pathlib import Path
 
-from BackEnd.app.contracts.pipeline import FrameMetadata, VideoMetadata
+from BackEnd.app.contracts.pipeline import (
+    FrameMetadata,
+    ObjectTrackResult,
+    TrackObservationResult,
+    VideoMetadata,
+)
 from BackEnd.app.database.adapter import (
     frame_metadata_from_frame,
+    object_track_result_from_object_track,
+    track_observation_result_from_observation,
     video_metadata_from_video,
 )
-from BackEnd.app.database.models import Frame, Video
+from BackEnd.app.database.models import Frame, ObjectTrack, TrackObservation, Video
 
 
 class DatabaseAdapterTests(unittest.TestCase):
@@ -66,6 +73,69 @@ class DatabaseAdapterTests(unittest.TestCase):
         self.assertEqual(result.keywords, ("one", "two"))
         self.assertEqual(result.title, "Example")
         self.assertEqual(result.duration_ms, 10_000)
+
+    def test_tracking_models_convert_to_independent_contracts(self) -> None:
+        track = ObjectTrack(
+            track_id=10,
+            shot_id="shot-1",
+            class_id="/m/01g317",
+            start_ms=1_000,
+            end_ms=2_000,
+            start_frame_idx=25,
+            end_frame_idx=50,
+            observation_count=2,
+            avg_confidence=0.85,
+            model_name="YOLO26",
+            model_version="yolo26n.pt",
+            tracker_name="ByteTrack",
+            tracker_version="8.4.116",
+            sampling_fps=2.0,
+            mapping_version="coco80-openimages-v1",
+        )
+        observation = TrackObservation(
+            track_id=10,
+            frame_idx=25,
+            timestamp_ms=1_000,
+            confidence=0.9,
+            x_min=0.1,
+            x_max=0.4,
+            y_min=0.2,
+            y_max=0.7,
+        )
+
+        self.assertEqual(
+            object_track_result_from_object_track(track),
+            ObjectTrackResult(
+                track_id=10,
+                shot_id="shot-1",
+                class_id="/m/01g317",
+                start_ms=1_000,
+                end_ms=2_000,
+                start_frame_idx=25,
+                end_frame_idx=50,
+                observation_count=2,
+                avg_confidence=0.85,
+                model_name="YOLO26",
+                model_version="yolo26n.pt",
+                tracker_name="ByteTrack",
+                tracker_version="8.4.116",
+                sampling_fps=2.0,
+                mapping_version="coco80-openimages-v1",
+            ),
+        )
+        self.assertEqual(
+            track_observation_result_from_observation(observation),
+            TrackObservationResult(
+                track_id=10,
+                frame_idx=25,
+                timestamp_ms=1_000,
+                confidence=0.9,
+                x_min=0.1,
+                x_max=0.4,
+                y_min=0.2,
+                y_max=0.7,
+            ),
+        )
 
 
 if __name__ == "__main__":

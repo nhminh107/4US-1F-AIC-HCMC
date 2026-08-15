@@ -21,5 +21,4 @@ if __name__ == "__main__":
     extractor = ShotExtractor()
 
     videos = db.get_list_video()
-    for video in videos: 
-        extract_shot(video.video_id)
+    extract_shot(video_id='L23_V005', db=db, extractor=extractor)

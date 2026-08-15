@@ -27,6 +27,20 @@ GENERAL_BATCH_SIZE = 32
 general_batch_size = GENERAL_BATCH_SIZE
 
 
+# Offline pipeline scheduling. ``auto`` enables two isolated GPU workers only
+# when both PyTorch and PaddleOCR can use CUDA. Set ``parallel`` to require the
+# concurrent mode, or ``sequential`` for deterministic one-stage-at-a-time
+# execution.
+PIPELINE_PARALLEL_MODE = "parallel"
+# These are admission-control reservations, not measured allocations. The
+# models are lightweight enough to share a 24 GiB GPU; OOM recovery still
+# retries the unfinished worker sequentially if this estimate is exceeded.
+PIPELINE_GPU_HEADROOM_GIB = 6
+PIPELINE_TRACKING_VRAM_BUDGET_GIB = 8
+PIPELINE_OCR_VRAM_BUDGET_GIB = 8
+PIPELINE_MAX_OOM_RETRIES = 2
+
+
 # Video ingestion
 VIDEO_METADATA_DIR = DATA_ROOT / "media-info-aic25-b1" / "media-info"
 VIDEO_DIR = DATA_ROOT / "video"
@@ -62,6 +76,8 @@ SHOT_WEIGHTS_PATH = DATA_ROOT / "models" / "transnetv2-pytorch-weights.pth"
 KEYFRAME_OUTPUT_DIR = DATA_ROOT / "keyframes"
 KEYFRAME_MAP_DIR = DATA_ROOT / "map-keyframes"
 ORGANIZER_OBJECT_DIR = DATA_ROOT / "objects-aic25-b1" / "objects"
+AIC25_OBJECT_JSONL_DIR = DATA_ROOT / "objects-aic25-b1-jsonl" / "objects"
+ORGANIZER_CLIP_FEATURE_DIR = DATA_ROOT / "clip-features-32"
 KEYFRAME_TARGET_INTERVAL_MS = 2_500
 KEYFRAME_MIN_FRAME_GAP = 5
 KEYFRAME_MAX_ADDITIONAL_PER_SHOT = 5
@@ -127,8 +143,9 @@ class ClipExtractorConfig:
 DEFAULT_VIETOCR_CONFIG_PATH = (
     BACKEND_ROOT / "app" / "ocr" / "configs" / "vietocr_vgg_transformer.yml"
 )
-OCR_DETECTION_BATCH_SIZE = 4
-OCR_RECOGNITION_BATCH_SIZE = GENERAL_BATCH_SIZE
+OCR_DETECTION_BATCH_SIZE = 16
+OCR_RECOGNITION_BATCH_SIZE = 128
+OCR_FRAME_CHUNK_SIZE = 32
 OCR_LEGACY_CHUNK_SIZE = 100
 OCR_LEGACY_DETECTION_CONFIDENCE_THRESHOLD = 0.65
 OCR_DEDUP_HAMMING_DISTANCE_THRESHOLD = 4
@@ -212,6 +229,9 @@ OPENIMAGES_MODEL_URL = (
 )
 OPENIMAGES_MODEL_NAME = "faster_rcnn/inception_resnet_v2"
 OPENIMAGES_MODEL_VERSION = "openimages_v4/1"
+OPENIMAGES_CLASS_MAP_PATH = (
+    BACKEND_ROOT / "app" / "object_detection" / "open_images_v4_classes.csv"
+)
 
 
 # Search indexing
@@ -223,17 +243,72 @@ POSTGRES_INSERT_BATCH_SIZE = 1_000
 
 
 # Tracking
+TRACKING_MODEL_PATH = DATA_ROOT / "models" / "yolo26n.pt"
+TRACKING_TRACKER_CONFIG_PATH = (
+    BACKEND_ROOT / "app" / "tracking" / "bytetrack.yaml"
+)
+TRACKING_CLASS_MAPPING_VERSION = "coco80-openimages-v1"
+TRACKING_BATCH_SIZE = 32
+# Classes with useful temporal behavior for retrieval. Static indoor objects
+# remain available through the independent ObjectDetection pipeline.
+TRACKING_COCO_CLASS_INDICES = (
+    0,  # person
+    1,  # bicycle
+    2,  # car
+    3,  # motorcycle
+    4,  # airplane
+    5,  # bus
+    6,  # train
+    7,  # truck
+    8,  # boat
+    14,  # bird
+    15,  # cat
+    16,  # dog
+    17,  # horse
+    18,  # sheep
+    19,  # cow
+    24,  # backpack
+    25,  # umbrella
+    26,  # handbag
+    28,  # suitcase
+    32,  # sports ball
+    36,  # skateboard
+    37,  # surfboard
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TrackingConfig:
+    model_path: Path = TRACKING_MODEL_PATH
+    tracker_config_path: Path = TRACKING_TRACKER_CONFIG_PATH
+    device: str | None = None
     sampling_fps: float = 2.0
-    track_activation_threshold: float = 0.25
-    high_confidence_threshold: float = 0.35
-    minimum_iou_threshold: float = 0.20
-    lost_track_buffer: int = 30
+    confidence_threshold: float = 0.25
+    iou_threshold: float = 0.70
+    max_detections: int = 300
+    batch_size: int = TRACKING_BATCH_SIZE
+    mapping_version: str = TRACKING_CLASS_MAPPING_VERSION
+    class_indices: tuple[int, ...] = TRACKING_COCO_CLASS_INDICES
 
     def __post_init__(self) -> None:
         if self.sampling_fps <= 0:
             raise ValueError("sampling_fps must be positive.")
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ValueError("confidence_threshold must be within [0, 1].")
+        if not 0.0 <= self.iou_threshold <= 1.0:
+            raise ValueError("iou_threshold must be within [0, 1].")
+        if self.max_detections <= 0:
+            raise ValueError("max_detections must be positive.")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+        if not self.mapping_version:
+            raise ValueError("mapping_version must not be empty.")
+        if not self.class_indices:
+            raise ValueError("class_indices must not be empty.")
+        if len(set(self.class_indices)) != len(self.class_indices):
+            raise ValueError("class_indices must not contain duplicates.")
+        if any(index < 0 or index > 79 for index in self.class_indices):
+            raise ValueError("class_indices must contain COCO indices from 0 to 79.")
 
 
 # Embedding
@@ -250,7 +325,7 @@ device = (
     if torch is not None
     else "cpu"
 )
-EMBEDDING_BATCH_SIZE = 64
+EMBEDDING_BATCH_SIZE = 128
 # Backward-compatible lowercase name used by the current embedding module.
 batch_size = EMBEDDING_BATCH_SIZE
 

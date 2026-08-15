@@ -1,0 +1,6 @@
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
+
+# Install this file only after requirements.txt, and use --no-deps. PyTorch
+# already supplies the CUDA 12.6 runtime packages needed by this project's
+# single-GPU PaddleOCR inference. See the deployment runbook for verification.
+paddlepaddle-gpu==3.3.0

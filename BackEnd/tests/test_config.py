@@ -10,9 +10,10 @@ from BackEnd.app.tracking.CONFIG import TrackingConfig as LegacyTrackingConfig
 def test_module_batch_sizes_preserve_existing_values() -> None:
     assert CONFIG.GENERAL_BATCH_SIZE == 32
     assert CONFIG.general_batch_size == CONFIG.GENERAL_BATCH_SIZE
-    assert CONFIG.EMBEDDING_BATCH_SIZE == 64
-    assert CONFIG.OCR_DETECTION_BATCH_SIZE == 4
-    assert CONFIG.OCR_RECOGNITION_BATCH_SIZE == 32
+    assert CONFIG.EMBEDDING_BATCH_SIZE == 128
+    assert CONFIG.OCR_DETECTION_BATCH_SIZE == 16
+    assert CONFIG.OCR_RECOGNITION_BATCH_SIZE == 128
+    assert CONFIG.TRACKING_BATCH_SIZE == 32
     assert CONFIG.SHOT_WINDOW_BATCH_SIZE == 8
     assert CONFIG.OBJECT_DETECTION_CHUNK_SIZE == 100
     assert CONFIG.ELASTICSEARCH_BULK_BATCH_SIZE == 500

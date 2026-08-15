@@ -1,36 +1,35 @@
---extra-index-url https://download.pytorch.org/whl/cu124
+--extra-index-url https://download.pytorch.org/whl/cu126
 
-opencv-python
-paddleocr
-paddlepaddle
-numpy>=1.24.0
-vietocr
-pillow>=9.5.0
-setuptools<82
-torch>=2.0.0
-torchvision>=0.15.0
-ultralytics>=8.3.0
-transformers>=4.48.0,<6.0.0
-sentence-transformers>=3.0.0
-tqdm>=4.65.0
-pydantic>=2.0.0
-pytest>=8.0.0
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-faiss-cpu>=1.7.4
-av>=12.0.0
-pyarrow>=15.0.0
-python-multipart>=0.0.9
-requests>=2.31.0
-streamlit>=1.40.0
-elasticsearch>=8.15.0,<9.0.0
-sqlalchemy>=2.0.0
-python-dotenv>=1.0.0
-pytest>=8.0.0
-webrtcvad>=2.0.10
-ultralytics
-trackers==2.6.0
-supervision==0.30.0
-tensorflow[and-cuda]>=2.16,<2.19
-tensorflow-hub>=0.16,<0.17
-chunkformer
+# PaddlePaddle GPU is installed separately with --no-deps from
+# requirements-paddle-gpu.txt. Paddle 3.3.0 and PyTorch 2.7.0 pin different
+# NCCL patch versions, although this project uses single-GPU inference only.
+opencv-python==5.0.0.93
+paddleocr==3.7.0
+numpy==2.3.5
+vietocr==0.3.13
+pillow==10.2.0
+setuptools==78.1.0
+torch==2.7.0+cu126
+torchvision==0.22.0+cu126
+torchaudio==2.7.0+cu126
+ultralytics==8.4.117
+lap==0.5.13
+transformers==5.15.0
+sentence-transformers==5.7.0
+tqdm==4.70.0
+pydantic==2.13.4
+pytest==9.1.1
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+faiss-cpu==1.15.0
+av==18.0.0
+pyarrow==24.0.0
+python-multipart==0.0.32
+requests==2.34.2
+streamlit==1.61.1
+elasticsearch==8.19.3
+sqlalchemy==2.0.51
+psycopg[binary]==3.3.4
+python-dotenv==1.2.2
+webrtcvad==2.0.10
+chunkformer==1.2.2
