@@ -44,7 +44,7 @@ run_detection_on_chunk()
 Chay tu root project:
 
 ```bash
-pip install -r requirements.txt
+uv sync --no-dev
 ```
 
 Dependency lien quan truc tiep den object detection:

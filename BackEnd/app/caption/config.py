@@ -48,12 +48,10 @@ DEFAULT_CLIP_SAMPLE_COUNT = 6
 MAX_NEW_TOKENS = 512
 
 # Quantize 4-bit là cấu hình khuyến nghị để chạy vừa VRAM GPU tầm trung
-# (module_caption.md mục 6, mục 7), nhưng đòi hỏi cài thêm 'bitsandbytes' và
-# 'accelerate' — 2 gói này CHƯA có trong requirements.txt của dự án tại thời
-# điểm viết module. Theo agent.md mục 3 ("không tự ý cài thêm dependency"),
-# module mặc định TẮT quantization để có thể import/test được ngay trên máy
-# chưa cài 2 gói trên; chỉ bật khi người dùng chủ động truyền use_4bit=True
-# sau khi đã cài đủ (xem model_client.VLMClient và caption_pipeline.md).
+# (module_caption.md mục 6, mục 7), nhưng đòi hỏi dependency group
+# `caption-4bit` trong pyproject.toml. Module mặc định TẮT quantization để có
+# thể import/test được trên môi trường pipeline cơ bản; chỉ bật sau khi đã chạy
+# `uv sync --group caption-4bit`.
 USE_4BIT_DEFAULT = False
 
 # Thư mục chứa 3 file prompt template (module_caption.md mục 5).

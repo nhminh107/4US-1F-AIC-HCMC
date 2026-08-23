@@ -1,0 +1,100 @@
+[project]
+name = "aic-hcmc-video-preprocessing"
+version = "0.1.0"
+description = "Offline video preprocessing pipeline for AIC HCMC."
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+pipeline = [
+    "av==18.0.0",
+    "chunkformer==1.2.2",
+    "elasticsearch==8.19.3",
+    "faiss-cpu==1.15.0",
+    "fastapi==0.141.1",
+    "lap==0.5.13",
+    "numpy==2.3.5",
+    "opencv-python==5.0.0.93",
+    "paddleocr==3.7.0",
+    "paddlepaddle-gpu==3.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "pillow==10.2.0",
+    "psycopg[binary]==3.3.4",
+    "pyarrow==24.0.0",
+    "pydantic==2.13.4",
+    "python-dotenv==1.2.2",
+    "python-multipart==0.0.32",
+    "requests==2.34.2",
+    "sentence-transformers==5.7.0",
+    "setuptools==78.1.0",
+    "sqlalchemy==2.0.51",
+    "streamlit==1.61.1",
+    "torch==2.7.0+cu126; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio==2.7.0+cu126; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision==0.22.0+cu126; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tqdm==4.70.0",
+    "transformers==5.15.0",
+    "ultralytics==8.4.117",
+    "uvicorn[standard]==0.52.1",
+    "vietocr==0.3.13",
+    "webrtcvad==2.0.10",
+]
+dev = [
+    "pytest==9.1.1",
+]
+caption-4bit = [
+    "accelerate",
+    "bitsandbytes",
+]
+openimages = [
+    "tensorflow[and-cuda]>=2.16,<2.19",
+    "tensorflow-hub>=0.16,<0.17",
+]
+
+[tool.uv]
+package = false
+default-groups = ["pipeline", "dev"]
+conflicts = [
+    [
+        { group = "pipeline" },
+        { group = "openimages" },
+    ],
+]
+
+# PaddlePaddle GPU 3.3.0 and PyTorch 2.7.0+cu126 require the same CUDA 12.6
+# runtime wheel versions except NCCL (2.25.1 vs 2.26.2). This pipeline only
+# performs single-GPU inference, so Paddle reuses the CUDA runtime installed by
+# PyTorch. The list below preserves Paddle's Python dependencies while omitting
+# its NVIDIA wheel dependencies, replacing the former `pip --no-deps` step.
+[[tool.uv.dependency-metadata]]
+name = "paddlepaddle-gpu"
+version = "3.3.0"
+requires-dist = [
+    "httpx",
+    "networkx",
+    "numpy>=1.21",
+    "opt-einsum==3.3.0",
+    "pillow",
+    "protobuf>=3.20.2",
+    "safetensors>=0.6.0",
+    "setuptools",
+    "typing-extensions",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "paddle-cu126"
+url = "https://www.paddlepaddle.org.cn/packages/stable/cu126/"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+paddlepaddle-gpu = { index = "paddle-cu126" }
+
+[tool.pytest.ini_options]
+testpaths = ["BackEnd/tests"]

@@ -142,9 +142,8 @@ def _build_4bit_quantization_config():
     except ImportError as exc:
         raise RuntimeError(
             "use_4bit=True yêu cầu 2 gói 'bitsandbytes' và 'accelerate', hiện "
-            "chưa có trong requirements.txt của dự án. Theo agent.md mục 3, "
-            "module không tự ý cài thêm dependency — hãy xác nhận rồi cài thủ "
-            "công bằng: pip install bitsandbytes accelerate\n"
+            "chưa được cài trong môi trường mặc định. Cài dependency group "
+            "đã khai báo bằng: uv sync --group caption-4bit\n"
             "Hoặc dùng VLMClient(use_4bit=False) để chạy full-precision "
             "(tốn VRAM hơn, xem module_caption.md mục 6/11)."
         ) from exc

@@ -30,7 +30,7 @@ class YOLODetector(Detector):
         except ImportError as error:
             raise ImportError(
                 "ultralytics is required for YOLODetector. "
-                "Install dependencies with: pip install -r requirements.txt"
+                "Install dependencies with: uv sync --no-dev"
             ) from error
 
         self.model = YOLO(model_path)

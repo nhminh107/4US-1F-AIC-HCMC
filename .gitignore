@@ -18,6 +18,7 @@ skills-lock.json
 # Virtual environments
 # =========================================================
 .venv/
+.venv-*/
 venv/
 env/
 ENV/

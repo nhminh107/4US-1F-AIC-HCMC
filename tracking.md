@@ -408,7 +408,7 @@ Phạm vi chính dự kiến gồm:
 - `BackEnd/app/database/postgre_db.py`
 - `BackEnd/app/database/postgre_script.sql`
 - Migration SQL mới trong `BackEnd/app/database/migrations/`
-- `requirements.txt`
+- `pyproject.toml` và `uv.lock`
 - README/instructions liên quan
 - Các test Tracking, pipeline, database và Object Detection liên quan
 

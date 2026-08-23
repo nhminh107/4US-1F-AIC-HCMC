@@ -11,7 +11,7 @@ def _cv2():
     except ImportError as error:
         raise ImportError(
             "opencv-python is required for image preprocessing. "
-            "Install dependencies with: pip install -r requirements.txt"
+            "Install dependencies with: uv sync --no-dev"
         ) from error
     return cv2
 

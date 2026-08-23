@@ -75,8 +75,9 @@ class TFHubOpenImagesDetector(Detector):
         except ImportError as error:
             raise ImportError(
                 "TFHubOpenImagesDetector requires tensorflow and tensorflow-hub. "
-                "Install them with: python -m pip install 'tensorflow>=2.16,<2.19' "
-                "'tensorflow-hub>=0.16,<0.17'"
+                "Install the isolated dependency group with: "
+                "UV_PROJECT_ENVIRONMENT=.venv-openimages uv sync "
+                "--no-default-groups --group openimages"
             ) from error
         loaded_model = hub.load(model_url)
         signatures = getattr(loaded_model, "signatures", {})
