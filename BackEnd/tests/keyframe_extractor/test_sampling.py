@@ -96,7 +96,7 @@ class SamplingTests(unittest.TestCase):
             existing_frame_idxs=[],
             max_additional_per_shot=5,
         )
-        self.assertLessEqual(len(candidates), 6)  # target_count <= 6
+        self.assertLessEqual(len(candidates), 5)
         self.assertEqual(candidates, sorted(candidates))
 
     def test_crowded_existing_frames_finds_available_slot(self) -> None:

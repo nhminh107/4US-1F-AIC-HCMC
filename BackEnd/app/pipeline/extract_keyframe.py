@@ -1,13 +1,27 @@
-from BackEnd.app.keyframe_extractor import KeyframeExtractor
-from BackEnd.app.database.postgre_db import PostgreManager
+"""Pipeline adapter for idempotent additional-keyframe extraction."""
 
-def extract_keyframes(video_id: str, db: PostgreManager, extractor: KeyframeExtractor): 
-    kfs = extractor.extract_for_video(
+from __future__ import annotations
+
+from BackEnd.app.database.postgre_db import PostgreManager
+from BackEnd.app.keyframe_extractor import KeyframeExtractor
+
+
+def extract_keyframes(video_id: str, db: PostgreManager, extractor: KeyframeExtractor) -> None:
+    """Extract only frame indices absent from the database.
+
+    This adapter deliberately preserves the existing pipeline I/O contract:
+    only extracted JPEGs and their Frame database records are emitted.
+    """
+
+    existing_frames = db.get_frame_record_by_video_id(video_id)
+    keyframes = extractor.extract_for_video(
         video_id=video_id,
-        shots=db.get_list_shot_in_video(video_id)
+        shots=db.get_list_shot_in_video(video_id),
+        existing_frame_idxs=[frame.frame_idx for frame in existing_frames],
+        existing_frame_ids=[frame.frame_id for frame in existing_frames],
     )
 
-    for kf in kfs: 
+    for kf in keyframes:
         db.add_frame(
             frame_id=kf.frame_id, 
             video_id=video_id, 
@@ -23,8 +37,7 @@ def extract_keyframes(video_id: str, db: PostgreManager, extractor: KeyframeExtr
             height=kf.height
         )
 
-if __name__ == "__main__": 
-    db = PostgreManager()
-    extractor = KeyframeExtractor()
-
-    extract_keyframes('L23_V005', db, extractor)
+if __name__ == "__main__":
+    database = PostgreManager()
+    keyframe_extractor = KeyframeExtractor()
+    extract_keyframes("L23_V005", database, keyframe_extractor)

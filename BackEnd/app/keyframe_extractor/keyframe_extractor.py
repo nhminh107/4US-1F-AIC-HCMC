@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence, Set
 from pathlib import Path
+import re
 import time
 
 from BackEnd.CONFIG import (
     KEYFRAME_OUTPUT_DIR as DEFAULT_KEYFRAME_DIR,
+    KEYFRAME_SELECTION_STRATEGY as DEFAULT_SELECTION_STRATEGY,
     PROJECT_ROOT,
     VIDEO_DIR as DEFAULT_VIDEO_DIR,
 )
@@ -57,7 +59,7 @@ class KeyframeExtractor:
         keyframe_dir: str | Path = DEFAULT_KEYFRAME_DIR,
         min_frame_gap: int = DEFAULT_MIN_FRAME_GAP,
         target_interval_ms: int = DEFAULT_TARGET_INTERVAL_MS,
-        strategy: KeyframeSelectionStrategy = "time",
+        strategy: KeyframeSelectionStrategy = DEFAULT_SELECTION_STRATEGY,
         hybrid_config: HybridKeyframeConfig | None = None,
         hybrid_selector: HybridKeyframeSelector | None = None,
         max_frames_per_ffmpeg_batch: int = DEFAULT_MAX_FRAMES_PER_FFMPEG_BATCH,
@@ -85,6 +87,7 @@ class KeyframeExtractor:
         self.hybrid_config = hybrid_config or HybridKeyframeConfig(min_frame_gap=min_frame_gap)
         self.hybrid_selector = hybrid_selector
         self.max_frames_per_ffmpeg_batch = max_frames_per_ffmpeg_batch
+        self.last_selection_manifest: list[dict[str, object]] = []
 
     def _resolve_video_path(self, video_id: str) -> Path:
         video_path = self.video_dir / f"{video_id}.mp4"
@@ -264,10 +267,19 @@ class KeyframeExtractor:
         except HybridKeyframeSelectionError:
             if self.strategy == "hybrid_clip_strict" or not self.hybrid_config.fallback_to_time_sampling:
                 raise
+            if hasattr(selector, "last_metrics"):
+                selector.last_metrics["status"] = "fallback_time_error"
             return time_candidates
 
         if not hybrid_candidates and self.hybrid_config.fallback_to_time_sampling:
-            return time_candidates
+            # A successful hybrid run may intentionally return no new frame:
+            # organizer keyframes already cover this shot semantically. Only
+            # use the baseline when the selector did not complete normally.
+            status = getattr(selector, "last_metrics", {}).get("status")
+            if status != "success":
+                if hasattr(selector, "last_metrics"):
+                    selector.last_metrics["status"] = "fallback_time_empty"
+                return time_candidates
         return hybrid_candidates
 
     def _get_hybrid_selector(self) -> HybridKeyframeSelector:
@@ -281,6 +293,7 @@ class KeyframeExtractor:
         shots: Sequence[ShotMetadata],
         existing_frame_idxs: Sequence[int] | Set[int] | None = None,
         *,
+        existing_frame_ids: Sequence[str] | Set[str] | None = None,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> list[FrameMetadata]:
         """Trích xuất keyframe bổ sung cho toàn bộ các shot của một `video_id`.
@@ -293,7 +306,8 @@ class KeyframeExtractor:
         all_candidate_indices: list[int] = []
         all_output_paths: list[Path] = []
         all_frame_metadatas: list[FrameMetadata] = []
-        current_seq = 1
+        current_seq = _next_extracted_sequence(existing_frame_ids)
+        self.last_selection_manifest = []
 
         # Cập nhật existing_frame_idxs liên tục khi trích xuất
         all_existing: set[int] = set(existing_frame_idxs) if existing_frame_idxs is not None else set()
@@ -305,34 +319,12 @@ class KeyframeExtractor:
         if self.strategy != "time":
             try:
                 from BackEnd.app.embedding.clip.video_session import PyAVVideoSession
-                from BackEnd.app.keyframe_extractor.candidate_sampler import (
-                    sample_candidate_frame_indices,
-                )
-
                 session = PyAVVideoSession(video_path, fps)
-
-                # Thu thập toàn bộ candidate timestamps của các shot để Single-Pass Prefetch trong 10s
-                all_video_timestamps: list[int] = []
-                for shot in sorted_shots:
-                    if shot.start_frame_idx is not None and shot.end_frame_idx is not None:
-                        c_idxs = sample_candidate_frame_indices(
-                            start_frame_idx=shot.start_frame_idx,
-                            end_frame_idx=shot.end_frame_idx,
-                            fps=fps,
-                            sample_fps=self.hybrid_config.sample_fps,
-                            min_frame_gap=self.hybrid_config.min_frame_gap,
-                            transition_margin_frames=self.hybrid_config.transition_margin_frames,
-                            max_candidate_frames_per_shot=self.hybrid_config.max_candidate_frames_per_shot,
-                        )
-                        all_video_timestamps.extend([round(idx / fps * 1000) for idx in c_idxs])
-
-                if hasattr(session, "prefetch_timestamps"):
-                    session.prefetch_timestamps(all_video_timestamps)
             except Exception:
                 session = None
 
         try:
-            per_shot_records: list[tuple[ShotMetadata, list[object]]] = []
+            per_shot_records: list[tuple[ShotMetadata, list[object], dict[str, object]]] = []
             for shot_number, shot in enumerate(sorted_shots, start=1):
                 if progress_callback is not None:
                     progress_callback(
@@ -358,7 +350,14 @@ class KeyframeExtractor:
                 if self.hybrid_selector is not None and hasattr(self.hybrid_selector, "last_redundancy_candidates"):
                     shot_cands = list(getattr(self.hybrid_selector, "last_redundancy_candidates", []))
 
-                per_shot_records.append((shot, shot_cands if shot_cands else candidate_indices))
+                hybrid_metrics = (
+                    dict(getattr(self.hybrid_selector, "last_metrics", {}) or {})
+                    if self.hybrid_selector is not None
+                    else {}
+                )
+                per_shot_records.append(
+                    (shot, shot_cands if shot_cands else candidate_indices, hybrid_metrics)
+                )
 
                 if progress_callback is not None:
                     progress_callback(
@@ -382,7 +381,24 @@ class KeyframeExtractor:
                     for rec in per_shot_records
                 ]
 
-            for (shot, _), candidate_indices in zip(per_shot_records, filtered_per_shot):
+            for (shot, _, hybrid_metrics), candidate_indices in zip(per_shot_records, filtered_per_shot):
+                self.last_selection_manifest.append(
+                    {
+                        "video_id": video_id,
+                        "shot_id": shot.shot_id,
+                        "shot_index": shot.shot_index,
+                        "strategy": self.strategy,
+                        "existing_frame_idxs": sorted(
+                            frame_idx
+                            for frame_idx in all_existing
+                            if shot.start_frame_idx is not None
+                            and shot.end_frame_idx is not None
+                            and shot.start_frame_idx <= frame_idx <= shot.end_frame_idx
+                        ),
+                        "selected_frame_idxs": list(candidate_indices),
+                        "hybrid": hybrid_metrics,
+                    }
+                )
                 if candidate_indices:
                     frame_metadatas, output_paths = self._build_frame_metadata(
                         shot,
@@ -454,3 +470,16 @@ class KeyframeExtractor:
         if self.strategy != "time" and self.hybrid_selector is not None:
             event["hybrid"] = dict(getattr(self.hybrid_selector, "last_metrics", {}) or {})
         return event
+
+
+def _next_extracted_sequence(existing_frame_ids: Sequence[str] | Set[str] | None) -> int:
+    """Return the next `_E###` sequence without colliding on a rerun."""
+
+    if not existing_frame_ids:
+        return 1
+    highest = 0
+    for frame_id in existing_frame_ids:
+        match = re.search(r"_E(\d+)$", frame_id)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1

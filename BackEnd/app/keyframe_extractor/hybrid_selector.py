@@ -10,8 +10,8 @@ from BackEnd.app.contracts.pipeline import ShotMetadata
 from BackEnd.app.keyframe_extractor.candidate_decoder import PyAVCandidateFrameDecoder
 from BackEnd.app.keyframe_extractor.candidate_sampler import sample_candidate_frame_indices
 from BackEnd.app.keyframe_extractor.clip_adapter import ClipImageEmbeddingAdapter, ImageEmbeddingAdapter
-from BackEnd.app.keyframe_extractor.clustering import select_cluster_representatives
 from BackEnd.app.keyframe_extractor.config import HybridKeyframeConfig
+from BackEnd.app.keyframe_extractor.facility_selection import select_facility_representatives
 from BackEnd.app.keyframe_extractor.redundancy import (
     RedundancyCandidate,
     eliminate_redundant_candidates,
@@ -23,7 +23,7 @@ class HybridKeyframeSelectionError(RuntimeError):
 
 
 class HybridKeyframeSelector:
-    """Select keyframes per shot using sparse sampling, CLIP, clustering, and dedup."""
+    """Select keyframes using sparse sampling, CLIP coverage, and deduplication."""
 
     def __init__(
         self,
@@ -49,13 +49,15 @@ class HybridKeyframeSelector:
         """Return final hybrid-selected frame indices for one shot."""
 
         total_start = time.perf_counter()
+        self.last_redundancy_candidates: list[RedundancyCandidate] = []
         self.last_metrics = {
             "candidate_count": 0,
+            "reference_count": 0,
             "selected_count": 0,
             "sample_s": 0.0,
             "decode_s": 0.0,
             "clip_s": 0.0,
-            "cluster_s": 0.0,
+            "selection_s": 0.0,
             "redundancy_s": 0.0,
             "total_s": 0.0,
             "status": "started",
@@ -82,12 +84,24 @@ class HybridKeyframeSelector:
             return []
 
         try:
+            existing_in_shot = _evenly_limit_indices(
+                sorted(
+                    frame_idx
+                    for frame_idx in set(existing_frame_idxs or [])
+                    if shot.start_frame_idx <= frame_idx <= shot.end_frame_idx
+                ),
+                self.config.max_reference_frames_per_shot,
+            )
+            self.last_metrics["reference_count"] = len(existing_in_shot)
+            # Decode the existing official/extracted frames only for semantic
+            # coverage. They are never returned as new candidates.
+            scoring_indices = sorted(set(candidates) | set(existing_in_shot))
             decode_start = time.perf_counter()
             try:
                 images_by_frame = self.decoder.decode(
                     video_id=shot.video_id,
                     video_path=video_path,
-                    frame_indices=candidates,
+                    frame_indices=scoring_indices,
                     fps=fps,
                     session=session,
                 )
@@ -95,29 +109,35 @@ class HybridKeyframeSelector:
                 images_by_frame = self.decoder.decode(
                     video_id=shot.video_id,
                     video_path=video_path,
-                    frame_indices=candidates,
+                    frame_indices=scoring_indices,
                     fps=fps,
                 )
             self.last_metrics["decode_s"] = time.perf_counter() - decode_start
-            images = [images_by_frame[frame_idx] for frame_idx in candidates]
+            images = [images_by_frame[frame_idx] for frame_idx in scoring_indices]
             clip_start = time.perf_counter()
-            vectors = self.embedding_adapter.encode_images(images)
+            scoring_vectors = self.embedding_adapter.encode_images(images)
             self.last_metrics["clip_s"] = time.perf_counter() - clip_start
-            cluster_start = time.perf_counter()
-            selections = select_cluster_representatives(
+            vector_by_frame = {
+                frame_idx: scoring_vectors[row] for row, frame_idx in enumerate(scoring_indices)
+            }
+            candidate_vectors = [vector_by_frame[frame_idx] for frame_idx in candidates]
+            reference_vectors = [vector_by_frame[frame_idx] for frame_idx in existing_in_shot]
+            selection_start = time.perf_counter()
+            selected_indices = select_facility_representatives(
                 candidates,
-                vectors,
+                candidate_vectors,
                 max_representatives=self.config.max_additional_per_shot,
+                reference_vectors=reference_vectors or None,
+                min_marginal_gain=self.config.min_marginal_gain,
             )
-            self.last_metrics["cluster_s"] = time.perf_counter() - cluster_start
+            self.last_metrics["selection_s"] = time.perf_counter() - selection_start
             semantic_candidates = [
                 RedundancyCandidate(
-                    frame_idx=selection.frame_idx,
-                    image=images_by_frame[selection.frame_idx],
-                    clip_vector=vectors[selection.vector_row],
-                    center_distance=selection.center_distance,
+                    frame_idx=frame_idx,
+                    image=images_by_frame[frame_idx],
+                    clip_vector=vector_by_frame[frame_idx],
                 )
-                for selection in selections
+                for frame_idx in selected_indices
             ]
             redundancy_start = time.perf_counter()
             selected = eliminate_redundant_candidates(
@@ -142,3 +162,14 @@ class HybridKeyframeSelector:
             raise HybridKeyframeSelectionError(
                 f"Hybrid keyframe selection failed for shot '{shot.shot_id}'."
             ) from error
+
+
+def _evenly_limit_indices(indices: Sequence[int], limit: int) -> list[int]:
+    """Keep temporal coverage while bounding official-frame decode and CLIP work."""
+
+    if len(indices) <= limit:
+        return list(indices)
+    if limit == 1:
+        return [indices[len(indices) // 2]]
+    positions = [round(index * (len(indices) - 1) / (limit - 1)) for index in range(limit)]
+    return [indices[position] for position in positions]

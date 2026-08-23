@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import sys
 import time
 from pathlib import Path
@@ -139,19 +140,24 @@ def run_demo(
 
     print("3. Running KeyframeExtractor video-level FFmpeg export (Module 2.4 - Trường)...")
     print(f"   -> Output directory: {video_output_dir}")
-    sparse_official = [idx for idx in official_frame_idxs if idx % 50 == 0]
     extracted_metadatas = keyframe_extractor.extract_for_video(
         video_id=video_id,
         shots=shots,
-        existing_frame_idxs=sparse_official,
+        existing_frame_idxs=official_frame_idxs,
         progress_callback=_print_progress_event,
     )
     if diagnostics:
-        selector = extractor.hybrid_selector
+        selector = keyframe_extractor.hybrid_selector
         selector_label = type(selector).__name__ if selector is not None else "not initialized"
         selector_id = id(selector) if selector is not None else "n/a"
         print(f"   -> Hybrid selector instance: {selector_label} ({selector_id})")
     t_keyframe = time.time() - t0
+
+    manifest_path = video_output_dir / "selection_manifest.json"
+    manifest_path.write_text(
+        json.dumps(keyframe_extractor.last_selection_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     t_total = time.time() - t_start
 
@@ -164,6 +170,7 @@ def run_demo(
     print("\n" + "=" * 75)
     print("📊 BÁO CÁO PHÂN RÃ THỜI GIAN THỰC THI (DETAILED BENCHMARK REPORT)")
     print("=" * 75)
+    print(f"Selection manifest: {manifest_path}")
     print(f"Target Video: {video_id}.mp4 | Total Shots: {len(shots)} | Keyframes Extracted: {len(extracted_metadatas)}")
     print("-" * 75)
     print(f"{'Giai đoạn (Pipeline Phase)':<42} | {'Thời gian (s)':<12} | {'Tỷ lệ (%)':<10}")
@@ -240,7 +247,7 @@ def _print_progress_event(event: dict[str, object]) -> None:
             f"Thời gian: {float(event['elapsed_s']):>5.2f}s "
             f"(RAM Decode: {float(hybrid.get('decode_s', 0.0)):.2f}s | "
             f"CLIP AI: {float(hybrid.get('clip_s', 0.0)):.2f}s | "
-            f"Cluster: {float(hybrid.get('cluster_s', 0.0)):.2f}s | "
+            f"Selection: {float(hybrid.get('selection_s', 0.0)):.2f}s | "
             f"Dedup: {float(hybrid.get('redundancy_s', 0.0)):.2f}s)",
             flush=True,
         )

@@ -64,7 +64,8 @@ def select_additional_keyframe_indices(
 
     duration_ms = max(1, end_ms - start_ms)
 
-    # Tính số keyframe mục tiêu cho shot này
+    # Tính tổng số keyframe mục tiêu cho shot này. ``max_additional`` là số
+    # frame *bổ sung*, không phải tổng số frame của shot.
     if duration_ms < target_interval_ms:
         target_count = 1
     else:
@@ -75,7 +76,7 @@ def select_additional_keyframe_indices(
     if len(shot_existing) >= target_count:
         return []
 
-    needed_count = target_count - len(shot_existing)
+    needed_count = min(max_additional_per_shot, target_count - len(shot_existing))
     total_frames = end_frame_idx - start_frame_idx + 1
 
     # Chia đều shot thành target_count phần và lấy điểm trung tâm mỗi phần
