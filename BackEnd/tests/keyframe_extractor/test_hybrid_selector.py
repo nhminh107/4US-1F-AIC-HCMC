@@ -12,6 +12,7 @@ from BackEnd.app.keyframe_extractor.config import HybridKeyframeConfig
 from BackEnd.app.keyframe_extractor.hybrid_selector import (
     HybridKeyframeSelectionError,
     HybridKeyframeSelector,
+    _evenly_limit_indices,
 )
 
 
@@ -38,7 +39,7 @@ class FakeEmbeddingAdapter:
     def encode_images(self, images):
         vectors = []
         for index, _image in enumerate(images):
-            vectors.append([float(index), 1.0 if index % 2 else 0.0])
+            vectors.append([float(index + 1), 1.0 if index % 2 else 0.0])
         return np.asarray(vectors, dtype=np.float32)
 
 
@@ -78,6 +79,13 @@ class HybridSelectorTests(unittest.TestCase):
 
         with self.assertRaises(HybridKeyframeSelectionError):
             selector.select(shot, video_path=Path("video.mp4"), fps=25.0, existing_frame_idxs=[])
+
+    def test_bounds_reference_frame_work_without_losing_temporal_extent(self) -> None:
+        limited = _evenly_limit_indices(list(range(100)), 16)
+
+        self.assertEqual(len(limited), 16)
+        self.assertEqual(limited[0], 0)
+        self.assertEqual(limited[-1], 99)
 
 
 if __name__ == "__main__":

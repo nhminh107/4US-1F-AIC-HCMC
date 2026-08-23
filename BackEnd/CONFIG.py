@@ -81,6 +81,9 @@ ORGANIZER_CLIP_FEATURE_DIR = DATA_ROOT / "clip-features-32"
 KEYFRAME_TARGET_INTERVAL_MS = 2_500
 KEYFRAME_MIN_FRAME_GAP = 5
 KEYFRAME_MAX_ADDITIONAL_PER_SHOT = 5
+# Hybrid is the production default. It still falls back to time sampling when
+# the local CLIP runtime cannot be initialized, unless strict mode is selected.
+KEYFRAME_SELECTION_STRATEGY = "hybrid_clip"
 
 
 # Clip extraction

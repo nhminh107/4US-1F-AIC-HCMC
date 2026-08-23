@@ -87,7 +87,8 @@ def hsv_histogram(image: object) -> np.ndarray:
         pil_image = Image.fromarray(array.astype(np.uint8), mode="RGB")
 
     hsv = np.asarray(pil_image.convert("HSV"), dtype=np.uint8)
-    bins = hsv // 32
+    # Promote before multiplying: uint8 overflow collapsed many histogram bins.
+    bins = (hsv // 32).astype(np.int16)
     flat = (bins[:, :, 0] * 64 + bins[:, :, 1] * 8 + bins[:, :, 2]).reshape(-1)
     histogram = np.bincount(flat, minlength=512).astype(np.float32)
     norm = float(np.linalg.norm(histogram))

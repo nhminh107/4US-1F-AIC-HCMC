@@ -47,6 +47,16 @@ class ShotRelativeHybridSelector:
         return [shot.start_frame_idx + 1]
 
 
+class CoveredHybridSelector:
+    """Mimics a successful semantic selector covered by organizer frames."""
+
+    def __init__(self) -> None:
+        self.last_metrics = {"status": "success", "candidate_count": 3, "selected_count": 0}
+
+    def select(self, shot, *, video_path, fps, existing_frame_idxs=None):
+        return []
+
+
 class KeyframeExtractorWiringTests(unittest.TestCase):
     """Kiểm tra orchestrator của KeyframeExtractor với nhiều kịch bản testcase."""
 
@@ -104,6 +114,31 @@ class KeyframeExtractorWiringTests(unittest.TestCase):
         self.assertGreater(len(frames), 0)
         seqs = [f.frame_id.split("_E")[1] for f in frames]
         self.assertEqual(seqs, [f"{i:03d}" for i in range(1, len(frames) + 1)])
+
+    def test_extract_for_video_continues_sequence_after_previous_run(self) -> None:
+        selector = ShotRelativeHybridSelector()
+        extractor = KeyframeExtractor(
+            video_dir="data/video",
+            keyframe_dir="data/keyframes",
+            strategy="hybrid_clip",
+            hybrid_selector=selector,
+        )
+        shot = ShotMetadata("L21_V001_S001", "L21_V001", 0, 0, 5000, 0, 124)
+        with (
+            patch("BackEnd.app.keyframe_extractor.keyframe_extractor.probe_fps", return_value=25.0),
+            patch(
+                "BackEnd.app.keyframe_extractor.keyframe_extractor.extract_and_save_frames_chunked",
+                side_effect=lambda v, indices, paths, chunk_size: [(1920, 1080)] * len(indices),
+            ),
+        ):
+            frames = extractor.extract_for_video(
+                "L21_V001",
+                [shot],
+                existing_frame_idxs=[],
+                existing_frame_ids=["L21_V001_E004"],
+            )
+
+        self.assertEqual(frames[0].frame_id, "L21_V001_E005")
 
     def test_extract_for_video_empty_shots_returns_empty(self) -> None:
         extractor = KeyframeExtractor(video_dir="data/video", keyframe_dir="data/keyframes")
@@ -170,6 +205,23 @@ class KeyframeExtractorWiringTests(unittest.TestCase):
 
         self.assertGreater(len(frames), 0)
         self.assertNotEqual([frame.frame_idx for frame in frames], [])
+
+    def test_hybrid_does_not_add_frames_when_official_coverage_is_sufficient(self) -> None:
+        extractor = KeyframeExtractor(
+            video_dir="data/video",
+            keyframe_dir="data/keyframes",
+            strategy="hybrid_clip",
+            hybrid_selector=CoveredHybridSelector(),
+        )
+        shot = ShotMetadata("L21_V001_S001", "L21_V001", 0, 0, 5000, 0, 124)
+        with (
+            patch("BackEnd.app.keyframe_extractor.keyframe_extractor.probe_fps", return_value=25.0),
+            patch("BackEnd.app.keyframe_extractor.keyframe_extractor.extract_and_save_frames") as export_mock,
+        ):
+            frames = extractor.extract(shot, existing_frame_idxs=[10, 60])
+
+        self.assertEqual(frames, [])
+        export_mock.assert_not_called()
 
     def test_hybrid_strict_raises_when_selector_fails(self) -> None:
         extractor = KeyframeExtractor(

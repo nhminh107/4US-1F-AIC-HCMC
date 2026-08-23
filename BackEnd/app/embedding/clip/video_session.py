@@ -57,6 +57,9 @@ class PyAVVideoSession:
             raise DecodeError(f"Failed to open video container '{self.video_path}': {error}") from error
 
     def close(self) -> None:
+        # Candidate RGB arrays can be large. Sessions are scoped to one video,
+        # so retaining this cache after close only creates avoidable RAM peaks.
+        self._cache.clear()
         if self._container is not None:
             try:
                 self._container.close()
