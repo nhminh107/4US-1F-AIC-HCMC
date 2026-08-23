@@ -210,9 +210,12 @@ def decode_frames(video_path: Path, raw_path: Path, mode: str) -> tuple[np.ndarr
 def iter_windows(frames: np.ndarray) -> Iterator[np.ndarray]:
     total = len(frames)
     if total < 1: raise ValueError("Cannot predict zero frames")
-    trailing_pad = WINDOW_CONTEXT + WINDOW_HOP - (total % WINDOW_HOP if total % WINDOW_HOP else WINDOW_HOP)
-    padded = np.concatenate([np.repeat(frames[:1], WINDOW_CONTEXT, axis=0), frames, np.repeat(frames[-1:], trailing_pad, axis=0)])
-    for pointer in range(0, len(padded) - WINDOW_SIZE + 1, WINDOW_HOP): yield padded[pointer:pointer + WINDOW_SIZE]
+    # Do not concatenate the complete video with its edge padding: doing so
+    # materializes a memmap into RAM.  These clipped indices are exactly the
+    # same edge-repeat convention as TransNetV2's reference implementation.
+    for pointer in range(0, ((total + WINDOW_HOP - 1) // WINDOW_HOP) * WINDOW_HOP, WINDOW_HOP):
+        indices = np.clip(np.arange(pointer - WINDOW_CONTEXT, pointer - WINDOW_CONTEXT + WINDOW_SIZE), 0, total - 1)
+        yield frames[indices]
 
 def predictions_to_scene_frames(predictions: np.ndarray, threshold: float = 0.5) -> list[tuple[int, int]]:
     if predictions.ndim != 1 or not len(predictions): raise ValueError("predictions must be non-empty 1-D")
@@ -390,11 +393,11 @@ def rebuild_exports() -> list[dict[str, Any]]:
         writer = csv.DictWriter(stream, fieldnames=OUTPUT_COLUMNS); writer.writeheader(); writer.writerows(rows)
     with (OUTPUT_DIR / "shots.jsonl").open("w", encoding="utf-8") as stream:
         for row in rows: stream.write(json.dumps({key: row[key] for key in OUTPUT_COLUMNS}, ensure_ascii=False) + "\n")
-    columns = ", ".join(OUTPUT_COLUMNS); updates = ",\n  ".join(f"{key} = EXCLUDED.{key}" for key in OUTPUT_COLUMNS[1:])
+    columns = ", ".join(OUTPUT_COLUMNS)
     statements = ["BEGIN;"]
     for row in rows:
         values = ", ".join(sql_literal(row[key]) if key in {"shot_id", "video_id"} else str(int(row[key])) for key in OUTPUT_COLUMNS)
-        statements.append(f"INSERT INTO shot (\n  {columns}\n) VALUES ({values})\nON CONFLICT (shot_id) DO UPDATE SET\n  {updates};")
+        statements.append(f"INSERT INTO shot (\n  {columns}\n) VALUES ({values})\nON CONFLICT (shot_id) DO NOTHING;")
     statements.append("COMMIT;")
     (OUTPUT_DIR / "insert_shots.sql").write_text("\n\n".join(statements) + "\n", encoding="utf-8")
     return rows
