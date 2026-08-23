@@ -461,6 +461,11 @@ def run_mock_tests() -> None:
             globals()["OUTPUT_DIR"], globals()["FORCE_REPROCESS"] = temporary_output, False
             status, _ = run_one(record, checkpoint); assert status == "skipped"
             assert len(rebuild_exports()) == 1  # rerun rebuilds, never appends duplicate rows.
+            exported_csv = pd.read_csv(temporary_output / "shots.csv"); exported_jsonl = [json.loads(line) for line in (temporary_output / "shots.jsonl").read_text().splitlines()]
+            exported_sql = (temporary_output / "insert_shots.sql").read_text(encoding="utf-8")
+            assert list(exported_csv.columns) == OUTPUT_COLUMNS and len(exported_jsonl) == 1
+            assert exported_jsonl[0] == {key: getattr(expected, key) for key in OUTPUT_COLUMNS}
+            assert "BEGIN;" in exported_sql and "COMMIT;" in exported_sql and "ON CONFLICT (shot_id)" in exported_sql
             source_file.write_bytes(b"changed-source")
             globals()["resolve_video"] = lambda _record: (calls.append("resolve"), (_ for _ in ()).throw(RuntimeError("reprocess observed")))[1]
             try: run_one(record, checkpoint)
