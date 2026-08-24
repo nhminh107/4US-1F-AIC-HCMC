@@ -204,7 +204,6 @@ class Pipeline:
                 embedding.embed_frames(video.video_id, pipeline)
             for video in self.videos:
                 embedding.embed_clips(video.video_id, pipeline)
-            for video in self.videos:
                 embedding.embed_shots(video.video_id, pipeline)
         finally:
             _release_stage_resource(pipeline)

@@ -21,8 +21,8 @@ def markdown(source: str) -> dict:
 
 
 cells = [
-    markdown("""# Additional Keyframe Extractor (Kaggle)\n\nNotebook độc lập này đọc export CSV, tạo JPEG additional keyframe lên Cloudflare R2 và sinh SQL `INSERT` cho PostgreSQL. Không kết nối hay thực thi SQL trên database.\n\n**Kaggle dependencies:** `boto3`, `numpy`, `Pillow`, `torch`, `sentence-transformers` và `ffmpeg/ffprobe`. Bật Internet để Kaggle tải `sentence-transformers/clip-ViT-B-32` lần đầu. Nếu image Kaggle thiếu package, cài trong một cell riêng trước khi chạy notebook; không ghi secret vào notebook.\n"""),
-    code("""# Configuration — edit only this cell for a Kaggle run.\nfrom __future__ import annotations\nimport os\nfrom pathlib import Path\n\nINPUT_DIR = Path(os.environ.get('KF_INPUT_DIR', '/kaggle/input/btc-keyframe-export'))\nWORK_DIR = Path(os.environ.get('KF_WORK_DIR', '/kaggle/working/keyframe_extractor'))\nVIDEO_FILE = os.environ.get('KF_VIDEOS_FILE', str(INPUT_DIR / 'videos.csv'))\nSHOT_FILE = os.environ.get('KF_SHOT_FILE', str(INPUT_DIR / 'shot.csv'))\nKEYFRAME_FILE = os.environ.get('KF_KEYFRAME_FILE', str(INPUT_DIR / 'keyframe.csv'))\nVIDEO_START = int(os.environ.get('VIDEO_START', '0'))\nVIDEO_END_RAW = os.environ.get('VIDEO_END', '')\nVIDEO_END = int(VIDEO_END_RAW) if VIDEO_END_RAW else None  # half-open [start, end)\nALLOW_CHECKPOINT_MISMATCH = os.environ.get('ALLOW_CHECKPOINT_MISMATCH', '0') == '1'\n\nTARGET_INTERVAL_MS = 2500\nMIN_FRAME_GAP = 5\nMAX_ADDITIONAL_PER_SHOT = 5\nTRANSITION_MARGIN_FRAMES = 2\nMAX_CANDIDATES = 64\nMAX_REFERENCES = 16\nCLIP_BATCH_SIZE = int(os.environ.get('CLIP_BATCH_SIZE', '128'))\nDOWNLOAD_WORKERS, UPLOAD_WORKERS = 2, 8\nFFMPEG_EXPORT_CHUNK_SIZE = 100\nSEED = 20260823\n\n# Secrets are read only from Kaggle Secrets/environment. Never print these values.\nR2_ENDPOINT_URL = os.environ.get('R2_ENDPOINT_URL')\nR2_BUCKET = os.environ.get('R2_BUCKET')\nR2_ACCESS_KEY_ID = os.environ.get('R2_ACCESS_KEY_ID')\nR2_SECRET_ACCESS_KEY = os.environ.get('R2_SECRET_ACCESS_KEY')\nR2_KEY_PREFIX = os.environ.get('R2_KEY_PREFIX', 'data2/keyframes').strip('/')\n\nWORK_DIR.mkdir(parents=True, exist_ok=True)\nassert 0 <= VIDEO_START and (VIDEO_END is None or VIDEO_END >= VIDEO_START)\n"""),
+    markdown("""# Additional Keyframe Extractor (Kaggle)\n\nNotebook độc lập này đọc export CSV, tạo JPEG additional keyframe lên Cloudflare R2 và sinh SQL `INSERT` cho PostgreSQL. Không kết nối hay thực thi SQL trên database.\n\n**Kaggle dependencies:** `boto3`, `numpy`, `Pillow`, `torch`, `transformers` và `ffmpeg/ffprobe`. Bật Internet để Kaggle tải SigLIP2 lần đầu. Nếu image Kaggle thiếu package, notebook chỉ cài package thiếu; không ghi secret vào notebook.\n"""),
+    code("""# Configuration — edit only this cell for a Kaggle run.\nfrom __future__ import annotations\nimport os\nfrom pathlib import Path\n\nINPUT_DIR = Path(os.environ.get('KF_INPUT_DIR', '/kaggle/input/btc-keyframe-export'))\nWORK_DIR = Path(os.environ.get('KF_WORK_DIR', '/kaggle/working/keyframe_extractor'))\nVIDEO_FILE = os.environ.get('KF_VIDEOS_FILE', str(INPUT_DIR / 'videos.csv'))\nSHOT_FILE = os.environ.get('KF_SHOT_FILE', str(INPUT_DIR / 'shot.csv'))\nKEYFRAME_FILE = os.environ.get('KF_KEYFRAME_FILE', str(INPUT_DIR / 'keyframe.csv'))\nVIDEO_START = int(os.environ.get('VIDEO_START', '0'))\nVIDEO_END_RAW = os.environ.get('VIDEO_END', '')\nVIDEO_END = int(VIDEO_END_RAW) if VIDEO_END_RAW else None  # half-open [start, end)\nALLOW_CHECKPOINT_MISMATCH = os.environ.get('ALLOW_CHECKPOINT_MISMATCH', '0') == '1'\n\nTARGET_INTERVAL_MS = 2500\nMIN_FRAME_GAP = 5\nMAX_ADDITIONAL_PER_SHOT = 5\nTRANSITION_MARGIN_FRAMES = 2\nMAX_CANDIDATES = 64\nMAX_REFERENCES = 16\nIMAGE_BATCH_SIZE = int(os.environ.get('IMAGE_BATCH_SIZE', '128'))\nSIGLIP_MODEL_ID = os.environ.get('SIGLIP_MODEL_ID', 'google/siglip2-base-patch16-224')\nSIGLIP_MODEL_REVISION = os.environ.get('SIGLIP_MODEL_REVISION', 'a7d042728184c5fa87e2569ec1c4121cb48f9885')\nDOWNLOAD_WORKERS, UPLOAD_WORKERS = 2, 8\nFFMPEG_EXPORT_CHUNK_SIZE = 100\nSEED = 20260823\n\n# Secrets are read only from Kaggle Secrets/environment. Never print these values.\nR2_ENDPOINT_URL = os.environ.get('R2_ENDPOINT_URL')\nR2_BUCKET = os.environ.get('R2_BUCKET')\nR2_ACCESS_KEY_ID = os.environ.get('R2_ACCESS_KEY_ID')\nR2_SECRET_ACCESS_KEY = os.environ.get('R2_SECRET_ACCESS_KEY')\nR2_KEY_PREFIX = os.environ.get('R2_KEY_PREFIX', 'data2/keyframes').strip('/')\n\nWORK_DIR.mkdir(parents=True, exist_ok=True)\nassert 0 <= VIDEO_START and (VIDEO_END is None or VIDEO_END >= VIDEO_START)\n"""),
     code("""# Imports, reproducibility, errors and utility functions.\nimport csv, hashlib, io, json, math, random, re, shutil, subprocess, time, traceback\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\nfrom dataclasses import asdict, dataclass\nfrom typing import Any, Iterable\n\nimport numpy as np\nfrom PIL import Image\n\nrandom.seed(SEED); np.random.seed(SEED)\ntry:\n    import torch\n    torch.manual_seed(SEED)\n    if torch.cuda.is_available():\n        torch.cuda.manual_seed_all(SEED)\n        torch.backends.cudnn.benchmark = True\n    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'\n    GPU_NAME = torch.cuda.get_device_name(0) if DEVICE == 'cuda' else None\nexcept ImportError as exc:\n    raise RuntimeError('Missing dependency: torch. Install it in Kaggle before running.') from exc\n\nERRORS_PATH, REPORT_PATH = WORK_DIR / 'errors.jsonl', WORK_DIR / 'report.jsonl'\ndef jsonl(path: Path, row: dict[str, Any]) -> None:\n    with path.open('a', encoding='utf-8') as handle: handle.write(json.dumps(row, ensure_ascii=False, default=str) + '\\n')\ndef error(stage: str, message: str, **context: Any) -> None:\n    jsonl(ERRORS_PATH, {'stage': stage, 'message': message, **context})\ndef run(command: list[str]) -> subprocess.CompletedProcess[str]:\n    return subprocess.run(command, check=True, capture_output=True, text=True)\ndef even(values: list[int], count: int) -> list[int]:\n    if count >= len(values): return values\n    if count == 1: return [values[len(values)//2]]\n    return [values[round(i*(len(values)-1)/(count-1))] for i in range(count)]\ndef qsql(value: Any) -> str:\n    if value is None or (isinstance(value, float) and math.isnan(value)): return 'NULL'\n    if isinstance(value, bool): return 'TRUE' if value else 'FALSE'\n    if isinstance(value, (int, float)): return str(value)\n    return "'" + str(value).replace("'", "''") + "'"\ndef sha256_paths(paths: Iterable[Path], extra: dict[str, Any]) -> str:\n    digest = hashlib.sha256(json.dumps(extra, sort_keys=True).encode())\n    for path in paths:\n        digest.update(path.name.encode()); digest.update(path.read_bytes())\n    return digest.hexdigest()\n"""),
     code("""# Input parsing and validation. Invalid rows are written to errors.jsonl and excluded.\nREQUIRED_SHOTS = {'shot_id','video_id','shot_index','start_ms','end_ms','start_frame_idx','end_frame_idx'}\nREQUIRED_FRAMES = {'frame_id','video_id','shot_id','timestamp_ms','fps','frame_idx','source','n','pts_time','frame_path','width','height'}\n\ndef read_rows(path: str, kind: str) -> list[dict[str, str]]:\n    source = Path(path)\n    if kind == 'videos' and source.suffix.lower() == '.txt':\n        rows = []\n        for line_no, line in enumerate(source.read_text(encoding='utf-8').splitlines(), 1):\n            if not line.strip(): continue\n            parts = [x.strip() for x in line.split(',', 1)]\n            if len(parts) != 2: error('input', 'expected video_id,url', file=str(source), line=line_no); continue\n            rows.append({'video_id': parts[0], 'video_url': parts[1]})\n        return rows\n    with source.open(encoding='utf-8-sig', newline='') as handle: return list(csv.DictReader(handle))\n\ndef require_columns(rows: list[dict[str,str]], needed: set[str], name: str) -> None:\n    found = set(rows[0]) if rows else set()\n    missing = needed - found\n    if missing: raise ValueError(f'{name} missing required columns: {sorted(missing)}')\n\ndef integer(row: dict[str,str], field: str) -> int: return int(str(row[field]).strip())\ndef decimal(row: dict[str,str], field: str) -> float: return float(str(row[field]).strip())\n\ndef load_and_validate() -> tuple[dict[str,str], dict[str,list[dict[str,Any]]], list[dict[str,Any]]]:\n    videos_raw, shots_raw, frames_raw = read_rows(VIDEO_FILE, 'videos'), read_rows(SHOT_FILE, 'shots'), read_rows(KEYFRAME_FILE, 'frames')\n    require_columns(videos_raw, {'video_id','video_url'}, 'videos')\n    require_columns(shots_raw, REQUIRED_SHOTS, 'shot.csv')\n    require_columns(frames_raw, REQUIRED_FRAMES, 'keyframe.csv')\n    videos = {r['video_id'].strip(): r['video_url'].strip() for r in videos_raw if r.get('video_id','').strip() and r.get('video_url','').strip()}\n    shots: dict[str,list[dict[str,Any]]] = {}\n    used_indexes: set[tuple[str,int]] = set()\n    for row_no, raw in enumerate(shots_raw, 2):\n        try:\n            row = {**raw, 'shot_index': integer(raw,'shot_index'), 'start_ms': integer(raw,'start_ms'), 'end_ms': integer(raw,'end_ms'), 'start_frame_idx': integer(raw,'start_frame_idx'), 'end_frame_idx': integer(raw,'end_frame_idx')}\n            video_id = row['video_id'].strip(); key = (video_id,row['shot_index'])\n            if video_id not in videos: raise ValueError('video_id has no URL')\n            if key in used_indexes: raise ValueError('duplicate shot_index within video')\n            if min(row['start_ms'],row['end_ms'],row['start_frame_idx'],row['end_frame_idx']) < 0 or row['end_frame_idx'] < row['start_frame_idx']: raise ValueError('invalid frame/time bounds')\n            used_indexes.add(key); shots.setdefault(video_id,[]).append(row)\n        except Exception as exc: error('validate_shot', str(exc), row_no=row_no, row=raw)\n    for values in shots.values(): values.sort(key=lambda r: r['shot_index'])\n    frames, frame_ids = [], set()\n    for row_no, raw in enumerate(frames_raw, 2):\n        try:\n            if raw['frame_id'] in frame_ids: raise ValueError('duplicate frame_id')\n            fps, frame_idx = decimal(raw,'fps'), integer(raw,'frame_idx')\n            if fps <= 0 or frame_idx < 0: raise ValueError('fps must be > 0 and frame_idx non-negative')\n            frame_ids.add(raw['frame_id']); frames.append({**raw, 'fps':fps, 'frame_idx':frame_idx})\n        except Exception as exc: error('validate_frame', str(exc), row_no=row_no, row=raw)\n    return videos, shots, frames\n"""),
     code("""# Video probing, sampling, decoding, image features and CLIP encoder.\ndef probe_video(video: Path) -> tuple[float, int, int]:\n    data = json.loads(run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=avg_frame_rate,width,height','-of','json',str(video)]).stdout)['streams'][0]\n    num, den = map(int, data['avg_frame_rate'].split('/')); fps = num / den\n    if fps <= 0: raise ValueError('ffprobe returned non-positive fps')\n    return fps, int(data['width']), int(data['height'])\ndef decode_frame(video: Path, frame_idx: int, fps: float) -> Image.Image:\n    process = subprocess.run(['ffmpeg','-v','error','-ss',f'{frame_idx/fps:.9f}','-i',str(video),'-frames:v','1','-f','image2pipe','-vcodec','mjpeg','pipe:1'], check=True, capture_output=True)\n    return Image.open(io.BytesIO(process.stdout)).convert('RGB').copy()\ndef candidate_indices(shot: dict[str,Any], fps: float, existing: set[int]) -> list[int]:\n    start,end = shot['start_frame_idx'],shot['end_frame_idx']\n    inner_start,inner_end = start,end\n    if end-start+1 > 2*TRANSITION_MARGIN_FRAMES+1: inner_start += TRANSITION_MARGIN_FRAMES; inner_end -= TRANSITION_MARGIN_FRAMES\n    step=max(1,round(fps)); values=list(range(inner_start,inner_end+1,step)); center=(inner_start+inner_end)//2\n    if center not in values: values.append(center)\n    values=sorted(x for x in set(values) if all(abs(x-y)>MIN_FRAME_GAP for y in existing))\n    return even(values,MAX_CANDIDATES) if len(values)>MAX_CANDIDATES else values\ndef target_additional(shot: dict[str,Any], existing_in_shot: set[int]) -> int:\n    duration=shot['end_ms']-shot['start_ms']; target=1 if duration<TARGET_INTERVAL_MS else 1+duration//TARGET_INTERVAL_MS\n    return max(0, min(MAX_ADDITIONAL_PER_SHOT, target-len(existing_in_shot)))\ndef hsv_feature(image: Image.Image) -> np.ndarray:\n    hsv=np.asarray(image.convert('HSV'),dtype=np.uint8); h=hsv[...,0].astype(np.int16)*8//256; s=hsv[...,1].astype(np.int16)*8//256; v=hsv[...,2].astype(np.int16)*8//256\n    bins=(h*64+s*8+v).ravel(); hist=np.bincount(bins,minlength=512).astype(np.float32); return hist/(np.linalg.norm(hist) or 1)\ndef cosine(a: np.ndarray,b: np.ndarray) -> float: return float(np.dot(a,b)/(np.linalg.norm(a)*np.linalg.norm(b) or 1))\n\nclass ClipEncoder:\n    def __init__(self, enabled: bool=True):\n        self.model=None; self.batch_size=CLIP_BATCH_SIZE\n        if enabled:\n            from sentence_transformers import SentenceTransformer\n            self.model=SentenceTransformer('sentence-transformers/clip-ViT-B-32',device=DEVICE); self.model.eval()\n    def encode(self, images: list[Image.Image]) -> np.ndarray:\n        if self.model is None: raise RuntimeError('CLIP disabled')\n        size=self.batch_size\n        while True:\n            try:\n                with torch.inference_mode(): out=self.model.encode(images,batch_size=size,convert_to_numpy=True,show_progress_bar=False,normalize_embeddings=True)\n                self.batch_size=size; return np.asarray(out,dtype=np.float32)\n            except RuntimeError as exc:\n                if DEVICE != 'cuda' or 'out of memory' not in str(exc).lower() or size <= 1: raise\n                size//=2; torch.cuda.empty_cache()  # OOM retry only\n"""),
@@ -33,10 +33,49 @@ cells = [
     code("""# Mandatory mock test: no cloud R2 or BTC data required. This uses time fallback by disabling CLIP.\nclass MockR2:\n    def __init__(self): self.data={}\n    def upload_file(self,path,Bucket,Key,ExtraArgs): self.data[(Bucket,Key)]=Path(path).read_bytes()\n    def head_object(self,Bucket,Key):\n        if (Bucket,Key) not in self.data: raise KeyError(Key)\n        return {'ContentLength':len(self.data[(Bucket,Key)])}\n\ndef mock_test() -> None:\n    global INPUT_DIR,WORK_DIR,VIDEO_FILE,SHOT_FILE,KEYFRAME_FILE,VIDEO_START,VIDEO_END,ALLOW_CHECKPOINT_MISMATCH\n    root=Path('/tmp/kf_mock'); shutil.rmtree(root,ignore_errors=True); root.mkdir(); INPUT_DIR=WORK_DIR=root/'work'; WORK_DIR.mkdir(); video=root/'tiny.mp4'\n    run(['ffmpeg','-y','-f','lavfi','-i','color=c=red:s=64x64:d=2','-f','lavfi','-i','testsrc2=s=64x64:d=2','-f','lavfi','-i','color=c=blue:s=64x64:d=2','-filter_complex','[0:v][1:v][2:v]concat=n=3:v=1:a=0','-r','10',str(video)])\n    (root/'videos.csv').write_text(f'video_id,video_url\\nv1,file://{video}\\n'); (root/'shot.csv').write_text('shot_id,video_id,shot_index,start_ms,end_ms,start_frame_idx,end_frame_idx\\ns1,v1,0,0,3000,0,29\\ns2,v1,1,3000,6000,30,59\\n')\n    (root/'keyframe.csv').write_text('frame_id,video_id,shot_id,timestamp_ms,fps,frame_idx,source,n,pts_time,frame_path,width,height\\nv1_F001,v1,,0,10,0,official,0,0,x,64,64\\nv1_E001,v1,,100,10,1,extracted,1,0.1,x,64,64\\n')\n    VIDEO_FILE=str(root/'videos.csv'); SHOT_FILE=str(root/'shot.csv'); KEYFRAME_FILE=str(root/'keyframe.csv'); VIDEO_START=0; VIDEO_END=None; ALLOW_CHECKPOINT_MISMATCH=False\n    client=MockR2(); first=run_pipeline(R2Uploader(client,'mock'),clip_enabled=False); rows=json.loads(checkpoint_path().read_text())['rows']; second=run_pipeline(R2Uploader(client,'mock'),clip_enabled=False)\n    assert len({r['frame_idx'] for r in rows})==len(rows) and all(r['source']=='extracted' for r in rows)\n    assert all(sum(r['shot_id']==s for r in rows)<=5 for s in ('s1','s2'))\n    assert all(not r['frame_id'].endswith('_E001') for r in rows) and all(r['frame_path'].startswith('data2/keyframes/v1/') for r in rows)\n    assert all(('mock',r['frame_path']) in client.data for r in rows) and first['official_frames']==1 and second['selected_uploaded']==len(rows)\n    assert (WORK_DIR/'insert_keyframes.sql').read_text().count("source") == len(rows)\n    print('mock test passed', first)\nmock_test()\n"""),
 ]
 
-# The cells above are retained as a readable baseline and mock test. These
-# production cells override its slow per-frame path with the Kaggle runtime.
+# Keep the baseline cells executable with the same fixed SigLIP encoder as the
+# production path. This prevents the notebook mock path from silently using a
+# different embedding model.
+legacy_encoder_source = "".join(cells[4]["source"])
+legacy_helpers, _ = legacy_encoder_source.split("class ClipEncoder:", 1)
+cells[4] = code(legacy_helpers.replace("CLIP encoder", "SigLIP encoder") + """class SiglipEncoder:
+    def __init__(self, enabled: bool=True):
+        self.model = self.processor = None
+        self.batch_size = IMAGE_BATCH_SIZE
+        if not enabled: return
+        from transformers import AutoModel, AutoProcessor
+        self.processor = AutoProcessor.from_pretrained(SIGLIP_MODEL_ID, revision=SIGLIP_MODEL_REVISION)
+        self.model = AutoModel.from_pretrained(SIGLIP_MODEL_ID, revision=SIGLIP_MODEL_REVISION).to(DEVICE)
+        self.model.eval()
+    def encode(self, images: list[Image.Image]) -> np.ndarray:
+        if self.model is None: raise RuntimeError('SigLIP encoder disabled')
+        vectors=[]; size=self.batch_size; start=0
+        while start < len(images):
+            batch=images[start:start+size]
+            try:
+                with torch.inference_mode():
+                    inputs=self.processor(images=batch,return_tensors='pt')
+                    inputs={key:value.to(DEVICE, non_blocking=True) for key,value in inputs.items()}
+                    dtype=torch.bfloat16 if DEVICE == 'cuda' and torch.cuda.is_bf16_supported() else torch.float16
+                    with torch.autocast(device_type='cuda',dtype=dtype,enabled=DEVICE == 'cuda'):
+                        value=self.model.get_image_features(**inputs)
+                    vectors.append(torch.nn.functional.normalize(value.float(),p=2,dim=1).cpu().numpy().astype(np.float32))
+                start += len(batch)
+            except RuntimeError as exc:
+                if DEVICE != 'cuda' or 'out of memory' not in str(exc).lower() or size <= 1: raise
+                size//=2; self.batch_size=size
+                torch.cuda.empty_cache()  # OOM retry only.
+        return np.concatenate(vectors,axis=0)
+""")
+cells[5]["source"] = "".join(cells[5]["source"]).replace("ClipEncoder", "SiglipEncoder").replace("CLIP/HSV", "SigLIP/HSV").splitlines(keepends=True)
+cells[7]["source"] = "".join(cells[7]["source"]).replace("clip_enabled", "image_encoder_enabled").replace("ClipEncoder", "SiglipEncoder").replace("'model':'sentence-transformers/clip-ViT-B-32'", "'model':SIGLIP_MODEL_ID").replace("'clip_batch_size_used'", "'image_batch_size_used'").splitlines(keepends=True)
+cells[8]["source"] = "".join(cells[8]["source"]).replace("clip_enabled=False", "image_encoder_enabled=False").replace("CLIP", "SigLIP").splitlines(keepends=True)
+cells[9]["source"] = "".join(cells[9]["source"]).replace("clip_enabled=False", "image_encoder_enabled=False").replace("CLIP", "SigLIP").splitlines(keepends=True)
+
+# The cells above provide common parsing, selection and upload helpers. These
+# production cells define the SigLIP Kaggle runtime.
 cells.extend([
-    markdown("""## Kaggle production runtime\n\nCác cell dưới đây là đường chạy thật. Chúng nạp Kaggle Secrets hoặc `.env`, dùng frame-index exact extraction, R2 upload song song và cho phép đổi image encoder bằng cấu hình mà không đổi thuật toán selector.\n"""),
+    markdown("""## Kaggle production runtime\n\nCác cell dưới đây là đường chạy thật. Chúng nạp Kaggle Secrets hoặc `.env`, dùng frame-index exact extraction, SigLIP2 cố định trên GPU và R2 upload song song.\n"""),
     code("""# Production configuration: Kaggle Secrets take precedence; `.env` is supported for an attached private dataset.
 import importlib.util, sys
 
@@ -52,7 +91,7 @@ def load_kaggle_secrets() -> None:
     try:
         from kaggle_secrets import UserSecretsClient
         client = UserSecretsClient()
-        for name in ('R2_ENDPOINT_URL','R2_BUCKET','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_KEY_PREFIX','KF_RUN_REAL','IMAGE_ENCODER_BACKEND','IMAGE_MODEL_ID','CLIP_BATCH_SIZE','VIDEO_START','VIDEO_END'):
+        for name in ('R2_ENDPOINT_URL','R2_BUCKET','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_KEY_PREFIX','KF_RUN_REAL','SIGLIP_MODEL_ID','SIGLIP_MODEL_REVISION','IMAGE_BATCH_SIZE','VIDEO_START','VIDEO_END'):
             if not os.environ.get(name):
                 try: os.environ[name] = client.get_secret(name)
                 except Exception: pass
@@ -73,19 +112,17 @@ VIDEO_END = int(os.environ['VIDEO_END']) if os.environ.get('VIDEO_END') else Non
 ALLOW_CHECKPOINT_MISMATCH = os.environ.get('ALLOW_CHECKPOINT_MISMATCH', '0') == '1'
 RUN_REAL = os.environ.get('KF_RUN_REAL', '0') == '1'
 REQUIRE_CUDA = os.environ.get('REQUIRE_CUDA', '1') == '1'
-IMAGE_ENCODER_BACKEND = os.environ.get('IMAGE_ENCODER_BACKEND', 'sentence_transformers')
-IMAGE_MODEL_ID = os.environ.get('IMAGE_MODEL_ID', 'sentence-transformers/clip-ViT-B-32')
-CLIP_BATCH_SIZE = int(os.environ.get('CLIP_BATCH_SIZE', '128'))
+IMAGE_ENCODER_BACKEND = 'transformers_siglip'
+IMAGE_MODEL_ID = os.environ.get('SIGLIP_MODEL_ID', 'google/siglip2-base-patch16-224')
+IMAGE_MODEL_REVISION = os.environ.get('SIGLIP_MODEL_REVISION', 'a7d042728184c5fa87e2569ec1c4121cb48f9885')
+IMAGE_BATCH_SIZE = int(os.environ.get('IMAGE_BATCH_SIZE', '128'))
 R2_ENDPOINT_URL = os.environ.get('R2_ENDPOINT_URL')
 R2_BUCKET = os.environ.get('R2_BUCKET')
 R2_ACCESS_KEY_ID = os.environ.get('R2_ACCESS_KEY_ID')
 R2_SECRET_ACCESS_KEY = os.environ.get('R2_SECRET_ACCESS_KEY')
 R2_KEY_PREFIX = os.environ.get('R2_KEY_PREFIX', 'data2/keyframes').strip('/')
 
-required_packages = {'boto3': 'boto3'}
-if IMAGE_ENCODER_BACKEND == 'sentence_transformers': required_packages['sentence_transformers'] = 'sentence-transformers'
-elif IMAGE_ENCODER_BACKEND == 'transformers_siglip': required_packages['transformers'] = 'transformers'
-else: raise ValueError('IMAGE_ENCODER_BACKEND must be sentence_transformers or transformers_siglip')
+required_packages = {'boto3': 'boto3', 'transformers': 'transformers'}
 missing = [package for module, package in required_packages.items() if importlib.util.find_spec(module) is None]
 if missing: subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', *missing])
 
@@ -93,14 +130,14 @@ if RUN_REAL and REQUIRE_CUDA and not torch.cuda.is_available():
     raise RuntimeError('GPU is required: enable a Kaggle GPU or set REQUIRE_CUDA=0 explicitly.')
 if RUN_REAL and not all([R2_ENDPOINT_URL, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY]):
     raise RuntimeError('Missing R2 configuration: add Kaggle Secrets or attach an .env file.')
-print({'run_real': RUN_REAL, 'device': DEVICE, 'encoder_backend': IMAGE_ENCODER_BACKEND, 'model': IMAGE_MODEL_ID, 'input_dir': str(INPUT_DIR)})
+print({'run_real': RUN_REAL, 'device': DEVICE, 'encoder_backend': IMAGE_ENCODER_BACKEND, 'model': IMAGE_MODEL_ID, 'revision': IMAGE_MODEL_REVISION, 'input_dir': str(INPUT_DIR)})
 """),
     code("""# Exact frame-index decode/export and swappable GPU image encoders.
 def decode_frames_exact(video: Path, frame_indices: list[int]) -> dict[int, Image.Image]:
     import tempfile
     indices = sorted(set(frame_indices))
     if not indices: return {}
-    select = '+'.join(f'eq(n\\,{index})' for index in indices)
+    select = '+'.join(f'eq(n\\\\,{index})' for index in indices)
     with tempfile.TemporaryDirectory(prefix='kf_decode_') as directory:
         pattern = str(Path(directory) / 'frame_%04d.jpg')
         run(['ffmpeg','-v','error','-y','-i',str(video),'-vf',f'select={select}','-vsync','vfr',pattern])
@@ -148,16 +185,12 @@ def export_frames_exact(video: Path, records: list[dict[str,Any]], stage_dir: Pa
 
 class ImageEncoder:
     def __init__(self, enabled: bool = True):
-        self.enabled, self.batch_size, self.backend = enabled, CLIP_BATCH_SIZE, IMAGE_ENCODER_BACKEND
+        self.enabled, self.batch_size = enabled, IMAGE_BATCH_SIZE
         self.model = self.processor = None
         if not enabled: return
-        if self.backend == 'sentence_transformers':
-            from sentence_transformers import SentenceTransformer
-            self.model = SentenceTransformer(IMAGE_MODEL_ID, device=DEVICE)
-        else:
-            from transformers import AutoModel, AutoProcessor
-            self.processor = AutoProcessor.from_pretrained(IMAGE_MODEL_ID)
-            self.model = AutoModel.from_pretrained(IMAGE_MODEL_ID).to(DEVICE)
+        from transformers import AutoModel, AutoProcessor
+        self.processor = AutoProcessor.from_pretrained(IMAGE_MODEL_ID, revision=IMAGE_MODEL_REVISION)
+        self.model = AutoModel.from_pretrained(IMAGE_MODEL_ID, revision=IMAGE_MODEL_REVISION).to(DEVICE)
         self.model.eval()
     def encode(self, images: list[Image.Image]) -> np.ndarray:
         if not self.enabled or self.model is None: raise RuntimeError('image encoder disabled')
@@ -167,14 +200,12 @@ class ImageEncoder:
             while True:
                 try:
                     with torch.inference_mode():
-                        if self.backend == 'sentence_transformers':
-                            value=self.model.encode(batch,batch_size=len(batch),convert_to_numpy=True,show_progress_bar=False,normalize_embeddings=True)
-                            value=torch.from_numpy(np.asarray(value,dtype=np.float32))
-                        else:
-                            inputs=self.processor(images=batch,return_tensors='pt')
-                            inputs={key:value.to(DEVICE) for key,value in inputs.items()}
+                        inputs=self.processor(images=batch,return_tensors='pt')
+                        inputs={key:value.to(DEVICE, non_blocking=True) for key,value in inputs.items()}
+                        autocast_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                        with torch.autocast(device_type='cuda', dtype=autocast_dtype, enabled=DEVICE == 'cuda'):
                             value=self.model.get_image_features(**inputs)
-                            value=torch.nn.functional.normalize(value,p=2,dim=1).cpu()
+                        value=torch.nn.functional.normalize(value.float(),p=2,dim=1)
                     vectors.append(value.detach().cpu().numpy().astype(np.float32)); start += len(batch); break
                 except RuntimeError as exc:
                     if DEVICE != 'cuda' or 'out of memory' not in str(exc).lower() or size <= 1: raise
@@ -237,7 +268,7 @@ def upload_parallel(uploader: R2Uploader, records: list[dict[str,Any]]) -> tuple
 def run_pipeline_production(uploader: R2Uploader) -> dict[str,Any]:
     ERRORS_PATH.unlink(missing_ok=True); REPORT_PATH.unlink(missing_ok=True)
     videos,shots,frames=load_and_validate()
-    config={'algorithm':'hybrid_facility_v2','model_backend':IMAGE_ENCODER_BACKEND,'model_id':IMAGE_MODEL_ID,'slice':[VIDEO_START,VIDEO_END],'max_candidates':MAX_CANDIDATES,'max_references':MAX_REFERENCES}
+    config={'algorithm':'hybrid_facility_v2','model_backend':IMAGE_ENCODER_BACKEND,'model_id':IMAGE_MODEL_ID,'model_revision':IMAGE_MODEL_REVISION,'slice':[VIDEO_START,VIDEO_END],'max_candidates':MAX_CANDIDATES,'max_references':MAX_REFERENCES}
     input_hash=sha256_paths([Path(VIDEO_FILE),Path(SHOT_FILE),Path(KEYFRAME_FILE)],config)
     state={'input_hash':input_hash,'completed':[],'rows':[]}
     if checkpoint_path().exists():
@@ -289,7 +320,7 @@ def run_pipeline_production(uploader: R2Uploader) -> dict[str,Any]:
             error('video',str(exc),video_id=video_id,traceback=traceback.format_exc())
     rows=sorted(state['rows'],key=lambda row:(row['video_id'],shot_order[row['shot_id']],row['frame_idx']))
     (WORK_DIR/'insert_keyframes.sql').write_text('\\n'.join(sql_row(row) for row in rows),encoding='utf-8')
-    summary={'videos_requested':len(selected_videos),'videos_completed':len(state['completed']),'selected_uploaded':len(rows),'fallback_count':fallback_count,'timings_seconds':timings,'device':DEVICE,'gpu_name':GPU_NAME,'model_backend':IMAGE_ENCODER_BACKEND,'model_id':IMAGE_MODEL_ID,'clip_batch_size_used':encoder.batch_size,'peak_vram_bytes':torch.cuda.max_memory_allocated() if DEVICE=='cuda' else None}
+    summary={'videos_requested':len(selected_videos),'videos_completed':len(state['completed']),'selected_uploaded':len(rows),'fallback_count':fallback_count,'timings_seconds':timings,'device':DEVICE,'gpu_name':GPU_NAME,'model_backend':IMAGE_ENCODER_BACKEND,'model_id':IMAGE_MODEL_ID,'model_revision':IMAGE_MODEL_REVISION,'image_batch_size_used':encoder.batch_size,'peak_vram_bytes':torch.cuda.max_memory_allocated() if DEVICE=='cuda' else None}
     (WORK_DIR/'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8'); return summary
 """),
     code("""# Real Kaggle run. Set KF_RUN_REAL=1 in `.env` or Kaggle environment; no manual uncommenting is required.

@@ -153,6 +153,34 @@ def test_embed_frames_persists_faiss_mappings() -> None:
     assert faiss_manager.add_count == 1
 
 
+def test_embed_frames_includes_available_organizer_keyframes(tmp_path: Path) -> None:
+    image_path = tmp_path / "official.jpg"
+    image_path.write_bytes(b"test-image")
+    official = FrameMetadata(
+        frame_id="L21_V005_001",
+        video_id="L21_V005",
+        shot_id=None,
+        timestamp_ms=0,
+        fps=30.0,
+        frame_idx=0,
+        source="official",
+        n=1,
+        frame_path=image_path,
+    )
+    database = _FakeDatabase([official])
+    embedder = _FakeEmbedder()
+    faiss_manager = _FakeFaissManager()
+
+    mappings = EmbeddingPipeline(
+        db=database,  # type: ignore[arg-type]
+        faiss_manager=faiss_manager,  # type: ignore[arg-type]
+        frame_embedder=embedder,  # type: ignore[arg-type]
+    ).embed_frames("L21_V005")
+
+    assert [mapping.frame_id for mapping in mappings] == [official.frame_id]
+    assert embedder.received_frames == [official]
+
+
 def test_embed_frames_rejects_missing_frame_paths() -> None:
     database = _FakeDatabase([_frame("L21_V005_E001")])
 
@@ -216,6 +244,7 @@ class _ClipDatabase:
         self.saved_shot_mappings: list[dict[str, object]] = []
         self.clip_mappings: list[ClipEmbeddingMapping] = []
         self.shot_mappings: list[ShotEmbeddingMapping] = []
+        self.shot_mapping_query_kwargs: dict[str, object] = {}
 
     def get_list_shot_in_video(self, video_id: str) -> list[ShotMetadata]:
         return [self.shot]
@@ -233,6 +262,7 @@ class _ClipDatabase:
     def get_shot_embedding_mappings(
         self, shot_ids: list[str], **kwargs: object
     ) -> list[ShotEmbeddingMapping]:
+        self.shot_mapping_query_kwargs = kwargs
         return [
             mapping for mapping in self.shot_mappings if mapping.shot_id in shot_ids
         ]
@@ -426,7 +456,9 @@ def test_embed_clips_and_shots_persist_faiss_mappings() -> None:
     assert [mapping.shot_id for mapping in shot_mappings] == ["L21_V005_S000"]
     assert database.saved_clip_mappings[0]["clip_id"] == "L21V005S000C01"
     assert database.saved_shot_mappings[0]["model_version"] == "test-version"
+    assert database.shot_mapping_query_kwargs["pooling_method"] == "coverage_weighted_mean"
     assert clip_service.call_count == 1
+    assert "L21_V005" not in pipeline._clip_cache
 
     assert pipeline.embed_clips("L21_V005") == clip_mappings
     assert pipeline.embed_shot("L21_V005") == shot_mappings

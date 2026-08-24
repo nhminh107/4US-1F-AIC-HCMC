@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from BackEnd import CONFIG
@@ -63,10 +65,18 @@ class EmbeddingPipeline:
         if self.frame_embedder is None:
             self.frame_embedder = ImageEmbedder(self._shared_adapter)
 
-        frames = [
+        candidate_frames = [
             frame
             for frame in self.db.get_frame_record_by_video_id(video_id)
-            if frame.source == "extracted"
+            if frame.source in CONFIG.EMBEDDING_FRAME_SOURCES
+        ]
+        # BTC rows can be loaded before the corresponding frame images are
+        # available locally.  They must not stop the supplemental-frame stage;
+        # extracted rows keep the existing fail-fast path validation below.
+        frames = [
+            frame
+            for frame in candidate_frames
+            if frame.source != "official" or _official_frame_is_available(frame)
         ]
         if not frames:
             return []
@@ -171,7 +181,7 @@ class EmbeddingPipeline:
             index_version=self.faiss_manager.version,
             model_name=self.faiss_manager.model_name,
             model_version=self.faiss_manager.model_version,
-            pooling_method="mean",
+            pooling_method=CONFIG.SHOT_AGGREGATION,
         )
         self.faiss_manager.validate_ids(
             "shot", [mapping.faiss_id for mapping in existing]
@@ -181,10 +191,13 @@ class EmbeddingPipeline:
             shot for shot in shots if shot.shot_id not in existing_by_shot
         ]
         if not pending_shots:
-            return [existing_by_shot[shot.shot_id] for shot in shots]
+            result = [existing_by_shot[shot.shot_id] for shot in shots]
+            self.release_video_cache(video_id)
+            return result
 
         clip_vectors, clip_records, _ = self._get_clip_embeddings(video_id)
         if not clip_records:
+            self.release_video_cache(video_id)
             return []
 
         shot_vectors, records = self.shot_service.aggregate_shots_to_matrix(
@@ -210,7 +223,14 @@ class EmbeddingPipeline:
             **existing_by_shot,
             **{mapping.shot_id: mapping for mapping in new_mappings},
         }
-        return [mappings_by_shot[shot.shot_id] for shot in shots]
+        result = [mappings_by_shot[shot.shot_id] for shot in shots]
+        self.release_video_cache(video_id)
+        return result
+
+    def release_video_cache(self, video_id: str) -> None:
+        """Release one video's Clip matrix after its Shot vectors are persisted."""
+
+        self._clip_cache.pop(video_id, None)
 
     def _require_clip_service(self) -> ClipEmbeddingService:
         return self.clip_service
@@ -290,6 +310,17 @@ def _embed_clip_matrix(
         success_records,
         [clips_by_id[record.entity_id] for record in success_records],
     )
+
+
+def _official_frame_is_available(frame) -> bool:
+    """Return whether a preloaded organizer frame can be opened on this worker."""
+
+    if frame.frame_path is None:
+        return False
+    path = Path(frame.frame_path)
+    if not path.is_absolute():
+        path = CONFIG.PROJECT_ROOT / path
+    return path.is_file()
 
 
 def _load_video_clips(
