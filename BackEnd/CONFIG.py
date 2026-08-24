@@ -327,6 +327,10 @@ device = (
     else "cpu"
 )
 EMBEDDING_BATCH_SIZE = 128
+# Organizer keyframes are high-value visual evidence when their image files
+# are available locally.  Missing organizer paths are skipped so preloaded BTC
+# rows never block supplemental-frame embedding.
+EMBEDDING_FRAME_SOURCES = ("official", "extracted")
 # Backward-compatible lowercase name used by the current embedding module.
 batch_size = EMBEDDING_BATCH_SIZE
 
@@ -335,6 +339,10 @@ OOM_RETRY = True
 CLIP_NUM_FRAMES = 16
 CLIP_SAMPLING_STRATEGY = "uniform_midpoint"
 CLIP_SAMPLING_VERSION = "clip-sampling@1.0.0"
+# Decode and embed a bounded number of Clip windows at once.  This caps the
+# decoded RGB working set for long videos while preserving the exact sampling
+# timestamps and resulting vectors.
+CLIP_MAX_CLIPS_PER_DECODE_UNIT = 16
 DECODE_TOLERANCE_MS = 500
 DECODE_SEEK_GROUP_GAP_MS = 2_000
 CLIP_AGGREGATION = "masked_mean"

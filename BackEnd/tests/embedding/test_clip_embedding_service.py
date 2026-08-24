@@ -23,9 +23,11 @@ from BackEnd.app.embedding.clip.service import ClipEmbeddingService
 class FakeDecoder:
     def __init__(self) -> None:
         self.decoded_timestamps: list[int] = []
+        self.decode_batches: list[tuple[int, ...]] = []
 
     def decode_nearest_frames(self, video_asset, timestamps_ms):
         self.decoded_timestamps.extend(timestamps_ms)
+        self.decode_batches.append(tuple(timestamps_ms))
         return DecodedFrameBatch(
             video_id=video_asset.video_id,
             images=tuple(f"image-{timestamp}" for timestamp in timestamps_ms),
@@ -139,6 +141,31 @@ class ClipEmbeddingServiceTests(unittest.TestCase):
             artifact_root = Path(temp_dir) / "artifacts" / manifest.embedding_space_id / "run-1"
             report = validate_embedding_artifact(manifest, artifact_root)
             self.assertTrue(report["valid"], report["errors"])
+
+    def test_service_bounds_decoded_frames_per_work_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            decoder = FakeDecoder()
+            service = ClipEmbeddingService(
+                decoder=decoder,
+                model_adapter=FakeAdapter(),
+                run_id="bounded-work-units",
+            )
+            video_path = Path(temp_dir) / "L21_V001.mp4"
+            video_path.write_bytes(b"fake")
+            clips = [
+                make_clip(f"clip-{index}", index * 1_000, (index + 1) * 1_000)
+                for index in range(17)
+            ]
+
+            vectors, records = service.embed_clips_to_matrix(
+                clips,
+                {"L21_V001": VideoAsset("L21_V001", video_path)},
+            )
+
+            self.assertEqual(vectors.shape, (17, 2))
+            self.assertEqual(len([record for record in records if record.status.value == "success"]), 17)
+            self.assertEqual(len(decoder.decode_batches), 2)
+            self.assertTrue(all(len(batch) <= 16 * 4 for batch in decoder.decode_batches))
 
     def test_service_writes_failure_only_artifact_when_video_asset_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
