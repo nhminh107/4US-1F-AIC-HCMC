@@ -31,29 +31,41 @@ from typing import Any, Iterable
 import pandas as pd
 '''),
 code(r'''# Configuration
-INPUT_DIR = Path("/kaggle/input/btc-object-jsonl")
+DATASET_SLUG = "btc-object-jsonl"
+KAGGLE_INPUT = Path("/kaggle/input")
+
+def find_dataset_root(slug: str, search_root: Path, max_depth: int = 4) -> Path | None:
+    # Kaggle mounts a dataset either directly at /kaggle/input/<slug> or, on newer
+    # notebook environments, nested under /kaggle/input/datasets/[<owner>/]<slug>;
+    # search bounded-depth instead of assuming one fixed layout.
+    if not search_root.is_dir(): return None
+    stack: list[tuple[Path,int]] = [(search_root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if current.name == slug: return current
+        if depth >= max_depth: continue
+        try: children = [item for item in current.iterdir() if item.is_dir()]
+        except PermissionError: continue
+        stack.extend((child, depth + 1) for child in children)
+    return None
 
 def resolve_object_jsonl_root(base: Path) -> Path:
-    # Kaggle datasets can mount either with the original upload folder name kept
-    # ("<base>/objects-aic25-b1-jsonl/objects") or flattened to its contents
+    # Within the dataset, the JSONL tree can keep the original upload folder name
+    # ("<base>/objects-aic25-b1-jsonl/objects") or be flattened to its contents
     # ("<base>/objects" or "<base>" itself); accept whichever actually has data.
     candidates = [base / "objects-aic25-b1-jsonl" / "objects", base / "objects", base]
     for candidate in candidates:
         if candidate.is_dir() and next(candidate.glob("*/*.jsonl"), None) is not None:
             return candidate
-    if not base.is_dir():
-        attached = sorted(item.name for item in base.parent.iterdir()) if base.parent.is_dir() else []
-        raise FileNotFoundError(f"{base} does not exist -- dataset not attached under this slug. Datasets attached under {base.parent}: {attached}")
     listing = sorted(item.name for item in base.iterdir())
     raise FileNotFoundError(f"{base} exists but has no */*.jsonl under any known layout. Top-level contents: {listing}")
 
 def describe_mount(base: Path) -> None:
     # Always-on diagnostic (independent of success/failure) so a Save-Version log
     # shows exactly what Kaggle actually mounted, without another guess-and-rerun cycle.
-    kaggle_input = Path("/kaggle/input")
-    print("/kaggle/input datasets:", sorted(item.name for item in kaggle_input.iterdir()) if kaggle_input.is_dir() else "MISSING")
-    if not base.is_dir():
-        print(base, "does not exist"); return
+    print("/kaggle/input top level:", sorted(item.name for item in KAGGLE_INPUT.iterdir()) if KAGGLE_INPUT.is_dir() else "MISSING")
+    if base is None or not base.is_dir():
+        print(f"Dataset '{DATASET_SLUG}' not found under {KAGGLE_INPUT}"); return
     level1 = sorted(item.name + ("/" if item.is_dir() else "") for item in base.iterdir())
     print(f"{base} ({len(level1)} entries):", level1[:30])
     for name in level1[:5]:
@@ -62,8 +74,11 @@ def describe_mount(base: Path) -> None:
             children = sorted(item.name for item in sub.iterdir())
             print(f"  {sub} ({len(children)} entries):", children[:20])
 
-describe_mount(INPUT_DIR)
-OBJECT_JSONL_ROOT = resolve_object_jsonl_root(INPUT_DIR)
+DATASET_ROOT = find_dataset_root(DATASET_SLUG, KAGGLE_INPUT)
+describe_mount(DATASET_ROOT)
+if DATASET_ROOT is None:
+    raise FileNotFoundError(f"Dataset '{DATASET_SLUG}' not found anywhere under {KAGGLE_INPUT} (searched {4} levels deep). Attach it via Notebook > Add Input.")
+OBJECT_JSONL_ROOT = resolve_object_jsonl_root(DATASET_ROOT)
 OUTPUT_DIR = Path("/kaggle/working/object_detection_ingestion")
 VIDEO_IDS: list[str] | None = None
 START_OFFSET = 0

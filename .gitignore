@@ -163,6 +163,9 @@ ocr_outputs/
 caption_outputs/
 retrieval_results/
 
+# Object Detection ingestion run outputs (timestamped, large .sql/.csv dumps)
+Notebook/ObjectDetection/object_detection_ingestion/object-detection-*/
+
 # =========================================================
 # Jupyter Notebook
 # =========================================================

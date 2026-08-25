@@ -1,0 +1,45 @@
+9.5s 1 0.00s - Debugger warning: It seems that frozen modules are being used, which may
+9.5s 2 0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+9.5s 3 0.00s - to python to disable frozen modules.
+9.5s 4 0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+10.4s 5 0.00s - Debugger warning: It seems that frozen modules are being used, which may
+10.4s 6 0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+10.4s 7 0.00s - to python to disable frozen modules.
+10.4s 8 0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+12.9s 9 /kaggle/input datasets: ['datasets']
+12.9s 10 /kaggle/input/btc-object-jsonl does not exist
+13.5s 11 Traceback (most recent call last):
+13.5s 12 File "<string>", line 1, in <module>
+13.5s 13 File "/usr/local/lib/python3.12/dist-packages/papermill/execute.py", line 131, in execute_notebook
+13.5s 14 raise_for_execution_errors(nb, output_path)
+13.5s 15 File "/usr/local/lib/python3.12/dist-packages/papermill/execute.py", line 251, in raise_for_execution_errors
+13.5s 16 raise error
+13.5s 17 papermill.exceptions.PapermillExecutionError:
+13.5s 18 ---------------------------------------------------------------------------
+13.5s 19 Exception encountered at "In [2]":
+13.5s 20 ---------------------------------------------------------------------------
+13.5s 21 FileNotFoundError                         Traceback (most recent call last)
+13.5s 22 /tmp/ipykernel_16/1228282181.py in <cell line: 0>()
+13.5s 23 32
+13.5s 24 33 describe_mount(INPUT_DIR)
+13.5s 25 ---> 34 OBJECT_JSONL_ROOT = resolve_object_jsonl_root(INPUT_DIR)
+13.5s 26 35 OUTPUT_DIR = Path("/kaggle/working/object_detection_ingestion")
+13.5s 27 36 VIDEO_IDS: list[str] | None = None
+13.5s 28 
+13.5s 29 /tmp/ipykernel_16/1228282181.py in resolve_object_jsonl_root(base)
+13.5s 30 12     if not base.is_dir():
+13.5s 31 13         attached = sorted(item.name for item in base.parent.iterdir()) if base.parent.is_dir() else []
+13.5s 32 ---> 14         raise FileNotFoundError(f"{base} does not exist -- dataset not attached under this slug. Datasets attached under {base.parent}: {attached}")
+13.5s 33 15     listing = sorted(item.name for item in base.iterdir())
+13.5s 34 16     raise FileNotFoundError(f"{base} exists but has no */*.jsonl under any known layout. Top-level contents: {listing}")
+13.5s 35 
+13.5s 36 FileNotFoundError: /kaggle/input/btc-object-jsonl does not exist -- dataset not attached under this slug. Datasets attached under /kaggle/input: ['datasets']
+13.5s 37 
+16.6s 38 /usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\|'
+16.6s 39 cells[i][c] = re.sub('\\\\\|', '|', cell)
+16.8s 40 /usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\_'
+16.8s 41 text = re.sub(r'_', '\_', text) # Escape underscores in display text
+17.7s 42 [NbConvertApp] Converting notebook __notebook__.ipynb to notebook
+18.1s 43 [NbConvertApp] Writing 18444 bytes to __notebook__.ipynb
+21.5s 44 [NbConvertApp] Converting notebook __notebook__.ipynb to html
+22.7s 45 [NbConvertApp] Writing 328598 bytes to __results__.html
