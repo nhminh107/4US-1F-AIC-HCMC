@@ -82,7 +82,7 @@ if SAMPLING_FPS<=0 or BATCH_SIZE<1 or IMAGE_SIZE<1 or MAX_LOST_SECONDS<=0: raise
 if not 0<=DETECTOR_CONFIDENCE<=NEW_TRACK_CONFIDENCE<=1: raise ValueError("Require 0 <= DETECTOR_CONFIDENCE <= NEW_TRACK_CONFIDENCE <= 1")
 if not VIDEOS_FILE.is_file(): raise FileNotFoundError(f"Missing {VIDEOS_FILE}")
 if not SHOTS_FILE.is_file(): SHOTS_FILE=SHOTS_FILE.with_name("shots.csv")
-if not SHOTS_FILE.is_file() or not VIDEO_ROOT.is_dir() or not MODEL_PATH.is_file(): raise FileNotFoundError("Need videos.csv, shot.csv/shots.csv, videos/, and local models/yolo26n.pt")
+if not SHOTS_FILE.is_file() or not MODEL_PATH.is_file(): raise FileNotFoundError("Need videos.csv, shot.csv/shots.csv, and local models/yolo26n.pt; videos/ is optional when video_url is supplied")
 RUN_DIR=OUTPUT_DIR/RUN_ID
 if RUN_DIR.exists(): raise FileExistsError(f"Refusing to overwrite {RUN_DIR}")
 '''),
