@@ -1,0 +1,22 @@
+{
+  "videos": 10,
+  "shots": 2783,
+  "clips": 0,
+  "materialize_files": true,
+  "failed_videos": [
+    "L21_V001",
+    "L21_V002",
+    "L21_V003",
+    "L21_V005",
+    "L21_V006",
+    "L21_V007",
+    "L21_V008",
+    "L21_V009",
+    "L21_V010",
+    "L21_V011"
+  ],
+  "seconds": 2820.7768692970003,
+  "ffmpeg_threads": 2,
+  "gpu_used": false,
+  "output_dir": "/kaggle/working/clip_extractor_output"
+}

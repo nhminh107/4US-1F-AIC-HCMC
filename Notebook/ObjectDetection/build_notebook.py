@@ -32,7 +32,38 @@ import pandas as pd
 '''),
 code(r'''# Configuration
 INPUT_DIR = Path("/kaggle/input/btc-object-jsonl")
-OBJECT_JSONL_ROOT = INPUT_DIR / "objects-aic25-b1-jsonl"
+
+def resolve_object_jsonl_root(base: Path) -> Path:
+    # Kaggle datasets can mount either with the original upload folder name kept
+    # ("<base>/objects-aic25-b1-jsonl/objects") or flattened to its contents
+    # ("<base>/objects" or "<base>" itself); accept whichever actually has data.
+    candidates = [base / "objects-aic25-b1-jsonl" / "objects", base / "objects", base]
+    for candidate in candidates:
+        if candidate.is_dir() and next(candidate.glob("*/*.jsonl"), None) is not None:
+            return candidate
+    if not base.is_dir():
+        attached = sorted(item.name for item in base.parent.iterdir()) if base.parent.is_dir() else []
+        raise FileNotFoundError(f"{base} does not exist -- dataset not attached under this slug. Datasets attached under {base.parent}: {attached}")
+    listing = sorted(item.name for item in base.iterdir())
+    raise FileNotFoundError(f"{base} exists but has no */*.jsonl under any known layout. Top-level contents: {listing}")
+
+def describe_mount(base: Path) -> None:
+    # Always-on diagnostic (independent of success/failure) so a Save-Version log
+    # shows exactly what Kaggle actually mounted, without another guess-and-rerun cycle.
+    kaggle_input = Path("/kaggle/input")
+    print("/kaggle/input datasets:", sorted(item.name for item in kaggle_input.iterdir()) if kaggle_input.is_dir() else "MISSING")
+    if not base.is_dir():
+        print(base, "does not exist"); return
+    level1 = sorted(item.name + ("/" if item.is_dir() else "") for item in base.iterdir())
+    print(f"{base} ({len(level1)} entries):", level1[:30])
+    for name in level1[:5]:
+        sub = base / name.rstrip("/")
+        if sub.is_dir():
+            children = sorted(item.name for item in sub.iterdir())
+            print(f"  {sub} ({len(children)} entries):", children[:20])
+
+describe_mount(INPUT_DIR)
+OBJECT_JSONL_ROOT = resolve_object_jsonl_root(INPUT_DIR)
 OUTPUT_DIR = Path("/kaggle/working/object_detection_ingestion")
 VIDEO_IDS: list[str] | None = None
 START_OFFSET = 0
@@ -42,7 +73,6 @@ MODEL_NAME = "faster_rcnn/inception_resnet_v2"
 MODEL_VERSION = "openimages_v4/1"
 RUN_ID = time.strftime("object-detection-%Y%m%d-%H%M%S")
 
-if not OBJECT_JSONL_ROOT.is_dir(): raise FileNotFoundError(f"Missing organizer JSONL root: {OBJECT_JSONL_ROOT}")
 if ROWS_PER_SQL_INSERT < 1: raise ValueError("ROWS_PER_SQL_INSERT must be positive")
 RUN_DIR = OUTPUT_DIR / RUN_ID
 if RUN_DIR.exists(): raise FileExistsError(f"Refusing to overwrite {RUN_DIR}")
