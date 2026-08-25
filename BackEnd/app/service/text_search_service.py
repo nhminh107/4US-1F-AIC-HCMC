@@ -10,7 +10,6 @@ from BackEnd.CONFIG import ELASTICSEARCH_BULK_BATCH_SIZE
 from BackEnd.app.contracts.search import TextIndexDocument, TextSearchHit, TextSearchQuery
 from BackEnd.app.database.elasticsearch_db import ElasticsearchManager
 from BackEnd.app.database.elasticsearch_documents import ElasticsearchDocumentBuilder
-from BackEnd.app.database.models import Caption, Frame, TranscriptSegment, Video
 
 
 class TextSearchService:
@@ -45,6 +44,7 @@ class TextSearchService:
         Prevents N+1 queries by pre-fetching relationships (OCR records, captions).
         Returns total count of indexed and failed documents.
         """
+        from BackEnd.app.database.models import Caption, Frame, TranscriptSegment, Video
 
         documents: list[TextIndexDocument] = []
 
@@ -102,6 +102,9 @@ class TextSearchService:
                 continue
 
         # Create physical index if not created yet, then bulk index documents
+        if hasattr(self.manager, "ensure_index"):
+            self.manager.ensure_index(index_name)
+
         summary = self.manager.index_documents(
             documents,
             index_name=index_name,

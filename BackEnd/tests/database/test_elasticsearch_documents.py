@@ -34,6 +34,24 @@ class ElasticsearchDocumentBuilderTests(unittest.TestCase):
         self.assertIn("Lễ trao giải AIC", document.content)
         self.assertEqual(document.keywords, ("AIC", "HCMC", "AIC"))
 
+    def test_build_object_document_valid(self) -> None:
+        frame = SimpleNamespace(
+            frame_id="L21_V001_001",
+            video_id="L21_V001",
+            shot_id="L21_V001_S000",
+            timestamp_ms=1000,
+        )
+        objects = [
+            SimpleNamespace(confidence=0.9, object_class=SimpleNamespace(class_name="Car"), class_id="c1"),
+            SimpleNamespace(confidence=0.8, object_class=SimpleNamespace(class_name="Person"), class_id="c2"),
+            SimpleNamespace(confidence=0.1, object_class=SimpleNamespace(class_name="Noise"), class_id="c3"),
+        ]
+        doc = self.builder.build_object_document(frame, objects, index_build_id="build-test")
+        self.assertIsNotNone(doc)
+        self.assertEqual(doc.source_type, "object")
+        self.assertEqual(doc.objects, ("Car", "Person"))
+        self.assertIn("Car Person", doc.content)
+
     def test_video_metadata_without_searchable_text_returns_none(self) -> None:
         video = SimpleNamespace(
             video_id="L21_V001",
@@ -419,7 +437,7 @@ class ElasticsearchDocumentBuilderTests(unittest.TestCase):
         self.assertIsNotNone(doc)
         self.assertEqual(doc.video_id, "L21_V001")
 
-    def test_caption_document_unresolved_video_id_raises_value_error(self) -> None:
+    def test_caption_document_unresolved_video_id_returns_none(self) -> None:
         orphaned_caption = SimpleNamespace(
             caption_id=11,
             frame_id=None,
@@ -434,11 +452,11 @@ class ElasticsearchDocumentBuilderTests(unittest.TestCase):
             prompt_version="p1",
         )
 
-        with self.assertRaisesRegex(ValueError, "caption video_id could not be resolved"):
-            self.builder.build_caption_document(
-                orphaned_caption,
-                index_build_id="build-test",
-            )
+        doc = self.builder.build_caption_document(
+            orphaned_caption,
+            index_build_id="build-test",
+        )
+        self.assertIsNone(doc)
 
     def test_ocr_document_with_boundary_coordinates_0_and_1(self) -> None:
         frame = SimpleNamespace(
