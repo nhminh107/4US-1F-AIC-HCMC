@@ -133,10 +133,63 @@ class YOLOTrackingServiceTests(unittest.TestCase):
             self.assertEqual(len(service.config.class_indices), 22)
             self.assertTrue(
                 all(
-                    str(call["tracker"]).endswith("tracking/bytetrack.yaml")
+                    call["tracker"] == str(service.runtime_tracker_config_path)
                     for call in model.calls
                 )
             )
+            self.assertTrue(
+                all(
+                    call["conf"]
+                    == service.config.detector_confidence_threshold
+                    for call in model.calls
+                )
+            )
+            self.assertTrue(
+                all(call["imgsz"] == service.config.image_size for call in model.calls)
+            )
+            runtime_config = service.runtime_tracker_config_path.read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("track_buffer: 6", runtime_config)
+            self.assertIn("track_high_thresh: 0.25", runtime_config)
+            self.assertIn("track_low_thresh: 0.1", runtime_config)
+            service.close()
+
+    def test_converts_only_sampled_pyav_frames_to_bgr(self) -> None:
+        class _LazyFrame:
+            def __init__(self) -> None:
+                self.convert_count = 0
+
+            def to_ndarray(self, *, format: str) -> np.ndarray:
+                self.convert_count += 1
+                self.assertEqual(format, "bgr24")
+                return np.zeros((60, 80, 3), dtype=np.uint8)
+
+            def assertEqual(self, actual: str, expected: str) -> None:
+                if actual != expected:
+                    raise AssertionError(f"{actual!r} != {expected!r}")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            video_path = Path(temporary_directory) / "video.mp4"
+            video_path.touch()
+            video = VideoMetadata(video_id="L21_V001", video_path=video_path)
+            shots = [ShotMetadata("shot-1", video.video_id, 0, 0, 1_000)]
+            decoded = [_LazyFrame() for _ in range(5)]
+            frames = [
+                (timestamp_ms, index, frame)
+                for index, (timestamp_ms, frame) in enumerate(
+                    zip((0, 100, 499, 500, 900), decoded, strict=True)
+                )
+            ]
+            service = self._service(_FakeYOLOModel(), sampling_fps=2.0)
+            with patch(
+                "BackEnd.app.tracking.tracking._iter_video_frames",
+                return_value=iter(frames),
+            ):
+                service.track_video(video, shots)
+
+            self.assertEqual([frame.convert_count for frame in decoded], [1, 0, 0, 1, 0])
+            service.close()
 
     def test_sampling_controls_the_number_of_yolo_calls(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

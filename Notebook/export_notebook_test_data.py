@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 
@@ -35,8 +37,16 @@ FRAME_COLUMNS = (
     "n",
     "pts_time",
     "frame_path",
+    "image_url",
     "width",
     "height",
+)
+
+PUBLIC_IMAGE_URL_ENV_NAMES = (
+    "R2_PUBLIC_URL",
+    "R2_PUBLIC_BASE_URL",
+    "IMAGE_PUBLIC_URL",
+    "CLOUDFLARE_R2_PUBLIC_URL",
 )
 
 
@@ -69,14 +79,56 @@ def normalize(value: Any) -> Any:
     return "" if value is None else value
 
 
+def build_image_url(public_base_url: str | None, frame_path: str | None) -> str:
+    """Build a public R2 image URL while retaining ``frame_path`` as the object key."""
+
+    if not public_base_url or not frame_path:
+        return ""
+    if frame_path.startswith(("https://", "http://")):
+        return frame_path
+    return f"{public_base_url.rstrip('/')}/{quote(frame_path.lstrip('/'), safe='/')}"
+
+
+def public_base_url(value: str | None) -> str | None:
+    """Use the CLI value first, then a deliberately explicit public URL variable."""
+
+    if value:
+        return value.strip()
+    for name in PUBLIC_IMAGE_URL_ENV_NAMES:
+        if configured := os.environ.get(name, "").strip():
+            return configured
+    return None
+
+
+def infer_public_base_url(video_rows: Iterable[dict[str, str]]) -> str | None:
+    """Infer one R2 public origin from the supplied public video URLs."""
+
+    origins = {
+        f"{parsed.scheme}://{parsed.netloc}"
+        for row in video_rows
+        if (parsed := urlsplit(row["video_url"])).scheme in {"http", "https"}
+        and parsed.netloc
+    }
+    return next(iter(origins)) if len(origins) == 1 else None
+
+
 def write_csv(path: Path, columns: tuple[str, ...], rows: Iterable[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="raise")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=columns,
+            extrasaction="raise",
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
 
-def export_rows(video_rows: list[dict[str, str]], output_dir: Path) -> dict[str, int]:
+def export_rows(
+    video_rows: list[dict[str, str]],
+    output_dir: Path,
+    image_public_url: str | None = None,
+) -> dict[str, int]:
     """Read shot/frame metadata and write notebook-compatible CSV files."""
 
     video_ids = [row["video_id"] for row in video_rows]
@@ -98,13 +150,19 @@ def export_rows(video_rows: list[dict[str, str]], output_dir: Path) -> dict[str,
         {column: normalize(getattr(shot, column)) for column in SHOT_COLUMNS}
         for shot in sorted(shots, key=lambda shot: (order[shot.video_id], shot.shot_index))
     ]
-    frame_rows = [
-        {column: normalize(getattr(frame, column)) for column in FRAME_COLUMNS}
-        for frame in sorted(
-            frames,
-            key=lambda frame: (order[frame.video_id], frame.frame_idx, frame.frame_id),
-        )
-    ]
+    base_url = public_base_url(image_public_url) or infer_public_base_url(video_rows)
+    frame_rows = []
+    for frame in sorted(
+        frames,
+        key=lambda frame: (order[frame.video_id], frame.frame_idx, frame.frame_id),
+    ):
+        row = {
+            column: normalize(getattr(frame, column))
+            for column in FRAME_COLUMNS
+            if column != "image_url"
+        }
+        row["image_url"] = build_image_url(base_url, row["frame_path"])
+        frame_rows.append(row)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(output_dir / "videos.csv", VIDEO_COLUMNS, video_rows)
@@ -120,9 +178,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video-file", type=Path, default=Path("Notebook/video.txt"))
     parser.add_argument("--output-dir", type=Path, default=Path("Notebook/test_data"))
+    parser.add_argument(
+        "--image-public-url",
+        help=(
+            "R2 public URL prefix. If omitted, reads one of "
+            f"{', '.join(PUBLIC_IMAGE_URL_ENV_NAMES)}."
+        ),
+    )
     args = parser.parse_args()
 
-    counts = export_rows(read_video_manifest(args.video_file), args.output_dir)
+    counts = export_rows(
+        read_video_manifest(args.video_file),
+        args.output_dir,
+        image_public_url=args.image_public_url,
+    )
     print(
         f"Exported {counts['videos']} videos, {counts['shots']} shots, "
         f"and {counts['keyframes']} keyframes to {args.output_dir}"

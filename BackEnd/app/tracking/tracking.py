@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.metadata import version
+import math
 from pathlib import Path
+import re
+import tempfile
 from typing import Any, Iterable, Iterator
 
 import av
@@ -51,8 +54,8 @@ class _TrackAccumulator:
         self.observation_count += 1
 
 
-def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, np.ndarray]]:
-    """Yield ``(timestamp_ms, frame_idx, BGR image)`` in decode order."""
+def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, Any]]:
+    """Yield decoded frames without eagerly materializing every BGR image."""
 
     with av.open(str(video_path)) as container:
         stream = container.streams.video[0]
@@ -62,7 +65,18 @@ def _iter_video_frames(video_path: Path) -> Iterator[tuple[int, int, np.ndarray]
                 timestamp_ms = round(float(frame.pts * frame.time_base) * 1_000)
             else:
                 timestamp_ms = round(decoded_index / average_rate * 1_000)
-            yield timestamp_ms, decoded_index, frame.to_ndarray(format="bgr24")
+            yield timestamp_ms, decoded_index, frame
+
+
+def _to_bgr_image(decoded_frame: Any) -> np.ndarray:
+    """Materialize BGR only after the frame has passed sampling gates."""
+
+    if isinstance(decoded_frame, np.ndarray):
+        return decoded_frame
+    to_ndarray = getattr(decoded_frame, "to_ndarray", None)
+    if not callable(to_ndarray):
+        raise TypeError("Decoded tracking frame must be an ndarray or PyAV video frame.")
+    return np.asarray(to_ndarray(format="bgr24"))
 
 
 def _as_numpy(value: Any) -> np.ndarray:
@@ -94,6 +108,7 @@ class YOLOTrackingService:
         self.tracker_config_path = self._resolve_project_path(
             self.config.tracker_config_path
         )
+        self.runtime_tracker_config_path = self._build_runtime_tracker_config()
 
         if not self.tracker_config_path.is_file():
             raise FileNotFoundError(
@@ -124,6 +139,44 @@ class YOLOTrackingService:
 
         self.model_version = self.model_path.name
         self.tracker_version = version("ultralytics")
+
+    def _build_runtime_tracker_config(self) -> Path:
+        """Materialize a per-run ByteTrack config in sampled-frame units."""
+
+        buffer_size = max(
+            1,
+            int(math.ceil(self.config.max_lost_seconds * self.config.sampling_fps)),
+        )
+        replacements = {
+            "track_high_thresh": self.config.confidence_threshold,
+            "track_low_thresh": self.config.detector_confidence_threshold,
+            "new_track_thresh": self.config.confidence_threshold,
+            "track_buffer": buffer_size,
+        }
+        content = self.tracker_config_path.read_text(encoding="utf-8")
+        for key, value in replacements.items():
+            pattern = rf"(?m)^{re.escape(key)}:\s*[^#\n]+"
+            replacement = f"{key}: {value}"
+            content, count = re.subn(pattern, replacement, content)
+            if count != 1:
+                raise ValueError(
+                    f"ByteTrack configuration must contain exactly one '{key}' setting."
+                )
+
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".yaml",
+            prefix="aic-hcmc-bytetrack-",
+            encoding="utf-8",
+            delete=False,
+        ) as stream:
+            stream.write(content)
+            return Path(stream.name)
+
+    def close(self) -> None:
+        """Remove the generated tracker configuration after a pipeline stage."""
+
+        self.runtime_tracker_config_path.unlink(missing_ok=True)
 
     @staticmethod
     def _resolve_project_path(path: Path) -> Path:
@@ -248,7 +301,7 @@ class YOLOTrackingService:
                     )
             sampled_batch.clear()
 
-        for timestamp_ms, frame_idx, image in _iter_video_frames(video_path):
+        for timestamp_ms, frame_idx, decoded_frame in _iter_video_frames(video_path):
             shot = advance_to_shot(timestamp_ms)
             if shot is None:
                 if shot_index >= len(ordered_shots):
@@ -265,6 +318,7 @@ class YOLOTrackingService:
                 self._reset_tracker_state()
                 active_shot_id = shot.shot_id
 
+            image = _to_bgr_image(decoded_frame)
             sampled_batch.append((shot, timestamp_ms, frame_idx, image))
             if len(sampled_batch) >= self.config.batch_size:
                 flush_batch()
@@ -295,11 +349,12 @@ class YOLOTrackingService:
         kwargs: dict[str, Any] = {
             "source": images,
             "persist": True,
-            "tracker": str(self.tracker_config_path),
-            "conf": self.config.confidence_threshold,
+            "tracker": str(self.runtime_tracker_config_path),
+            "conf": self.config.detector_confidence_threshold,
             "iou": self.config.iou_threshold,
             "max_det": self.config.max_detections,
             "classes": list(self.config.class_indices),
+            "imgsz": self.config.image_size,
             "verbose": False,
         }
         if self.config.device is not None:
