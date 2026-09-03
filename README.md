@@ -10,6 +10,7 @@ Pipeline hỗ trợ:
 - OCR tiếng Việt, object detection, và theo dõi đối tượng bằng YOLO + ByteTrack;
 - tiền xử lý audio và ASR;
 - tạo embedding frame, clip và shot để xây dựng FAISS index;
+- tạo FrameContext từ Caption/OCR/Object và dense text index cho Context/ASR;
 - chuyển dữ liệu object chính thức của BTC thành SQL.
 
 ## Nguyên tắc vận hành
@@ -57,6 +58,8 @@ Caption và ASR là stage bổ sung. Caption gọi API FPT nên không phải lu
 | `BackEnd/app/object_detection/` | YOLO hoặc chuyển JSONL Open Images của BTC | `objectdetection` |
 | `BackEnd/app/tracking/` | YOLO26 + ByteTrack, reset tracker theo shot | `objecttrack`, `trackobservation` |
 | `BackEnd/app/embedding/` | SigLIP/CLIP embedding, artifact và FAISS | embedding records + index |
+| `BackEnd/app/frame_context/` | Ghép Caption, OCR và Object thành text evidence theo frame | FrameContext Parquet + manifest |
+| `BackEnd/app/text_embedding/` | Dense embedding và FAISS cho FrameContext/ASR segment | index + mapping + manifest |
 | `BackEnd/app/audio_pre/`, `BackEnd/app/ASR/` | Chuẩn hóa audio theo shot và nhận dạng tiếng nói | audio artifact, transcript |
 | `BackEnd/app/database/` | PostgreSQL, Elasticsearch và FAISS adapters | persistence/search index |
 | `Notebook/` | Các notebook Kaggle độc lập, xuất SQL/artifact | artifact theo từng stage |
